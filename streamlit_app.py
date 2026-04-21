@@ -23,73 +23,186 @@ st.write(
 
 
 # -----------------------------
-# View mode helpers
+# View helpers
 # -----------------------------
 def label(simple: str, advanced: str, advanced_mode: bool) -> str:
     return advanced if advanced_mode else simple
 
 
-def time_unit(advanced_mode: bool) -> str:
-    return "steps" if advanced_mode else "intervals"
+def format_duration(minutes: float, advanced_mode: bool) -> str:
+    if advanced_mode:
+        return f"{minutes:.0f} minutes"
+
+    if minutes < 60:
+        return f"{minutes:.0f} minutes"
+
+    hours = minutes / 60
+    if hours < 24:
+        return f"{hours:.1f} hours"
+
+    days = hours / 24
+    return f"{days:.1f} days"
 
 
-# -----------------------------
-# Model helpers
-# -----------------------------
+def safe_div(a: float, b: float) -> float:
+    return a / b if b != 0 else 0.0
+
+
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+# -----------------------------
+# Real-world profiles
+# -----------------------------
+TIME_SCALE_OPTIONS = {
+    "1 minute": 1,
+    "5 minutes": 5,
+    "15 minutes": 15,
+    "30 minutes": 30,
+    "1 hour": 60,
+}
+
+FILTER_TYPE_INFO = {
+    "Sponge filter": {
+        "efficiency": 0.72,
+        "description": "Gentle flow, high biological filtration, best suited to shrimp and fry.",
+    },
+    "Internal filter": {
+        "efficiency": 0.95,
+        "description": "Moderate all-round filtration, common in standard home tanks.",
+    },
+    "Hang-on-back": {
+        "efficiency": 1.05,
+        "description": "Good surface movement and moderate mechanical filtration.",
+    },
+    "Canister filter": {
+        "efficiency": 1.20,
+        "description": "Strong mechanical and biological filtration, good for heavier waste loads.",
+    },
+}
+
+FEED_TYPE_INFO = {
+    "Pellets": {
+        "spike_multiplier": 1.00,
+        "linger_modifier": 1.00,
+        "description": "Moderate spike, moderate decay. Good all-round reference food.",
+    },
+    "Flakes": {
+        "spike_multiplier": 1.20,
+        "linger_modifier": 1.08,
+        "description": "Break up quickly and create a sharper waste spike if overfed.",
+    },
+    "Powder / shrimp food": {
+        "spike_multiplier": 1.35,
+        "linger_modifier": 1.12,
+        "description": "Spreads very fast through the water column and can spike waste quickly.",
+    },
+    "Frozen / live food": {
+        "spike_multiplier": 1.15,
+        "linger_modifier": 0.92,
+        "description": "Usually richer and messier, but often not as instantly dispersed as powder.",
+    },
+    "Slow-release / wafers / snowflake": {
+        "spike_multiplier": 0.70,
+        "linger_modifier": 0.65,
+        "description": "Releases waste more gradually and tends to linger longer.",
+    },
+}
+
+STOCKING_INFO = {
+    "Light": "Few animals for the tank size. Lower waste production.",
+    "Moderate": "Typical home stocking level. Balanced waste production.",
+    "Heavy": "High population for the tank size. Higher waste production and less margin for error.",
+}
+
+
+# -----------------------------
+# Model mapping
+# -----------------------------
 def map_setup_to_rates(
     tank_type: str,
-    filtration_strength: str,
     stocking_level: str,
-) -> Tuple[float, float, float]:
-    settling_by_tank = {
-        "Shrimp Tank": 0.18,
+    tank_size_l: int,
+    filter_type: str,
+    flow_rate_lph: int,
+    feed_type: str,
+) -> Tuple[float, float, float, Dict[str, float | str]]:
+    """
+    Convert real-world setup into simplified model rates.
+
+    k_s = settling
+    k_c = consumption
+    k_f = filtration
+    """
+    turnover = safe_div(flow_rate_lph, tank_size_l)
+
+    base_settling = {
+        "Shrimp Tank": 0.16,
         "Fish Tank": 0.20,
-        "Mixed Tank": 0.19,
-        "Custom": 0.20,
-    }
+        "Mixed Tank": 0.18,
+        "Custom": 0.18,
+    }[tank_type]
 
-    filtration_by_strength = {
-        "Weak": 0.10,
-        "Medium": 0.20,
-        "Strong": 0.30,
-    }
-
-    consumption_by_stock = {
+    base_consumption = {
         "Light": 0.06,
         "Moderate": 0.10,
-        "Heavy": 0.16,
+        "Heavy": 0.15,
+    }[stocking_level]
+
+    filter_efficiency = float(FILTER_TYPE_INFO[filter_type]["efficiency"])
+    feed_linger = float(FEED_TYPE_INFO[feed_type]["linger_modifier"])
+
+    # Tank-type adjustments
+    if tank_type == "Shrimp Tank":
+        tank_flow_modifier = 0.82
+        base_settling *= 0.95
+    elif tank_type == "Fish Tank":
+        tank_flow_modifier = 1.05
+        base_consumption *= 1.08
+    elif tank_type == "Mixed Tank":
+        tank_flow_modifier = 0.95
+    else:
+        tank_flow_modifier = 1.0
+
+    # Filtration rate from turnover
+    # This is intentionally bounded to keep the model stable.
+    filtration_rate = clamp((turnover / 10.0) * filter_efficiency * tank_flow_modifier, 0.05, 0.42)
+
+    # Larger tanks dilute waste more effectively
+    size_modifier = 1.0
+    if tank_size_l <= 30:
+        size_modifier = 0.95
+    elif tank_size_l >= 150:
+        size_modifier = 1.08
+
+    settling_rate = clamp(base_settling * size_modifier, 0.05, 0.30)
+    consumption_rate = clamp(base_consumption * size_modifier, 0.03, 0.22)
+
+    # Feed type affects how long material stays problematic in the system
+    # Lower linger modifier = slower, more drawn out release
+    settling_rate *= feed_linger
+    consumption_rate *= clamp(feed_linger, 0.65, 1.15)
+
+    settling_rate = clamp(settling_rate, 0.04, 0.32)
+    consumption_rate = clamp(consumption_rate, 0.03, 0.24)
+
+    derived = {
+        "turnover": turnover,
+        "filter_efficiency": filter_efficiency,
+        "feed_linger": feed_linger,
     }
 
-    k_s = settling_by_tank[tank_type]
-    k_f = filtration_by_strength[filtration_strength]
-    k_c = consumption_by_stock[stocking_level]
-    return k_s, k_c, k_f
+    return settling_rate, consumption_rate, filtration_rate, derived
 
 
-def parse_feed_times(feed_times_text: str, simulation_length: int) -> List[int]:
-    if not feed_times_text.strip():
-        return []
-
-    parsed: List[int] = []
-    for part in feed_times_text.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        try:
-            value = int(part)
-        except ValueError:
-            continue
-
-        if 0 <= value < simulation_length:
-            parsed.append(value)
-
-    return sorted(set(parsed))
+def get_feed_multiplier(feed_type: str) -> float:
+    return float(FEED_TYPE_INFO[feed_type]["spike_multiplier"])
 
 
+# -----------------------------
+# Simulation
+# -----------------------------
 def run_simulation(
     feed_times: List[int],
     simulation_length: int,
@@ -97,14 +210,17 @@ def run_simulation(
     k_s: float,
     k_c: float,
     k_f: float,
+    feed_type: str,
 ) -> List[float]:
     p = 0.0
     results: List[float] = []
+
     total_removal = k_s + k_c + k_f
+    spike_multiplier = get_feed_multiplier(feed_type)
 
     for t in range(simulation_length):
         if t in feed_times:
-            p += feed_amount
+            p += feed_amount * spike_multiplier
 
         p = p - total_removal * p
         p = max(p, 0.0)
@@ -113,6 +229,9 @@ def run_simulation(
     return results
 
 
+# -----------------------------
+# Analytics
+# -----------------------------
 def area_under_curve(values: List[float]) -> float:
     return sum(values)
 
@@ -237,7 +356,7 @@ def load_score(
     return round(clamp(score, 0.0, 10.0), 1)
 
 
-def waste_risk_score(timing: float, load: float) -> float:
+def overall_efficiency_score(timing: float, load: float) -> float:
     score = (timing * 0.45) + (load * 0.55)
     return round(clamp(score, 0.0, 10.0), 1)
 
@@ -267,11 +386,16 @@ def generate_summary(
 def build_human_interpretation(
     values: List[float],
     feed_times: List[int],
+    tank_type: str,
+    tank_size_l: int,
     feed_amount: float,
     k_s: float,
     k_c: float,
     k_f: float,
     goal: str,
+    turnover: float,
+    feed_type: str,
+    minutes_per_interval: int,
 ) -> Tuple[str, str, List[str], List[str], Dict[str, float | str]]:
     notes: List[str] = []
     actions: List[str] = []
@@ -304,19 +428,35 @@ def build_human_interpretation(
 
     timing = timing_score(values, feed_times)
     load = load_score(peak, total_load, len(feed_times), goal)
-    overall = waste_risk_score(timing, load)
+    overall = overall_efficiency_score(timing, load)
 
     avg_gap = average_feed_gap(feed_times)
     gap_ok = True if len(feed_times) < 2 else (avg_gap is not None and avg_gap >= gap_needed)
 
-    notes.append(f"Each feed creates a highest waste spike of about {peak:.2f}.")
-    notes.append(f"The tank recovers to a low level after about {clear_steps} intervals.")
-    notes.append(f"The tank returns close to baseline after about {baseline_steps} intervals.")
-    notes.append(f"Tank clearing strength is {k_s + k_c + k_f:.2f}.")
+    recovery_minutes = clear_steps * minutes_per_interval
+    baseline_minutes = baseline_steps * minutes_per_interval
+    gap_minutes = gap_needed * minutes_per_interval
 
-    if len(feed_times) >= 2:
-        notes.append(f"Average time between feeds is about {avg_gap:.1f} intervals.")
-        notes.append(f"Recommended minimum delay for this setup is about {gap_needed} intervals.")
+    notes.append(f"Each feed creates a highest waste spike of about {peak:.2f}.")
+    notes.append(f"The tank recovers to a low level after about {format_duration(recovery_minutes, False)}.")
+    notes.append(f"The tank returns close to baseline after about {format_duration(baseline_minutes, False)}.")
+    notes.append(f"Estimated tank turnover is {turnover:.1f}x per hour.")
+    notes.append(f"Feed type selected: {feed_type}.")
+
+    if len(feed_times) >= 2 and avg_gap is not None:
+        notes.append(
+            f"Average time between feeds is about {format_duration(avg_gap * minutes_per_interval, False)}."
+        )
+        notes.append(
+            f"Recommended minimum delay for this setup is about {format_duration(gap_minutes, False)}."
+        )
+
+    if turnover < 3:
+        notes.append("Filtration is on the weak side for faster waste clearance.")
+        actions.append("Increase flow rate or improve filtration if you want faster recovery.")
+    elif turnover > 8 and tank_type == "Shrimp Tank":
+        notes.append("Flow may be strong for a typical shrimp setup.")
+        actions.append("Check whether flow is too aggressive for shrimp comfort.")
 
     if overlap:
         notes.append("The next feed arrives before the tank has fully recovered.")
@@ -332,6 +472,10 @@ def build_human_interpretation(
         actions.append("Consider reducing feed amount slightly.")
     else:
         notes.append("The feed amount per event is manageable for this setup.")
+
+    if tank_size_l <= 30 and peak > 5:
+        notes.append("Small tanks have less margin for error because waste concentrates faster.")
+        actions.append("Be more conservative with feed amount in smaller tanks.")
 
     if goal == "Minimise Waste":
         actions.append("Prioritise lower waste spikes over feeding frequency.")
@@ -432,10 +576,48 @@ def suggest_split_feed_schedule(
     return suggested, new_amount
 
 
+def optimise_feed_plan(
+    current_feed_times: List[int],
+    current_feed_amount: float,
+    simulation_length: int,
+    k_s: float,
+    k_c: float,
+    k_f: float,
+    feed_type: str,
+    goal: str,
+) -> Tuple[List[int], float]:
+    if not current_feed_times:
+        return [], current_feed_amount
+
+    test_values = run_simulation(
+        current_feed_times,
+        simulation_length,
+        current_feed_amount,
+        k_s,
+        k_c,
+        k_f,
+        feed_type,
+    )
+    better_times = suggest_better_spacing(current_feed_times, test_values, simulation_length)
+    peak = max_value(test_values)
+    better_amount = current_feed_amount
+
+    if goal in ["Minimise Waste", "Balanced Feeding"]:
+        better_amount = suggest_reduced_feed_amount(current_feed_amount, peak)
+
+    return better_times, better_amount
+
+
 def make_export_report(
     tank_type: str,
-    filtration_strength: str,
+    tank_size_l: int,
+    filter_type: str,
+    flow_rate_lph: int,
+    turnover: float,
+    filtration_strength_text: str,
     stocking_level: str,
+    feed_type: str,
+    time_scale_label: str,
     simulation_length: int,
     feed_amount: float,
     feed_times: List[int],
@@ -454,8 +636,14 @@ def make_export_report(
     lines.append("")
     lines.append("SETUP")
     lines.append(f"Tank Type: {tank_type}")
-    lines.append(f"Filtration Strength: {filtration_strength}")
+    lines.append(f"Tank Size: {tank_size_l}L")
+    lines.append(f"Filter Type: {filter_type}")
+    lines.append(f"Filter Flow Rate: {flow_rate_lph} L/h")
+    lines.append(f"Turnover Rate: {turnover:.1f}x per hour")
+    lines.append(f"Filtration Assessment: {filtration_strength_text}")
     lines.append(f"Stocking Level: {stocking_level}")
+    lines.append(f"Feed Type: {feed_type}")
+    lines.append(f"Time Scale: {time_scale_label}")
     lines.append(f"Simulation Length: {simulation_length}")
     lines.append(f"Goal: {goal}")
     lines.append("")
@@ -508,10 +696,27 @@ with st.sidebar:
         ["Shrimp Tank", "Fish Tank", "Mixed Tank", "Custom"],
     )
 
-    filtration_strength = st.selectbox(
-        "Filtration Strength",
-        ["Weak", "Medium", "Strong"],
-        index=1,
+    tank_size_l = st.slider(
+        "Tank size (litres)",
+        min_value=10,
+        max_value=500,
+        value=60,
+        step=5,
+        help="Bigger tanks dilute waste more and usually recover more steadily.",
+    )
+
+    filter_type = st.selectbox(
+        "Filter type",
+        ["Sponge filter", "Internal filter", "Hang-on-back", "Canister filter"],
+    )
+
+    flow_rate_lph = st.slider(
+        "Filter flow rate (L/h)",
+        min_value=50,
+        max_value=3000,
+        value=300,
+        step=25,
+        help="How much water the filter moves per hour.",
     )
 
     stocking_level = st.selectbox(
@@ -520,13 +725,40 @@ with st.sidebar:
         index=1,
     )
 
+    feed_type = st.selectbox(
+        "Feed type",
+        ["Pellets", "Flakes", "Powder / shrimp food", "Frozen / live food", "Slow-release / wafers / snowflake"],
+    )
+
+    st.caption(STOCKING_INFO[stocking_level])
+    st.caption(FILTER_TYPE_INFO[filter_type]["description"])
+    st.caption(FEED_TYPE_INFO[feed_type]["description"])
+
+    turnover = safe_div(flow_rate_lph, tank_size_l)
+
+    if turnover < 3:
+        filtration_strength_text = "Low"
+    elif turnover < 6:
+        filtration_strength_text = "Moderate"
+    else:
+        filtration_strength_text = "High"
+
+    st.caption(f"Estimated turnover: {turnover:.1f}x per hour ({filtration_strength_text} filtration)")
+
+    time_scale_label = st.selectbox(
+        "What does one interval represent?",
+        list(TIME_SCALE_OPTIONS.keys()),
+        index=2,
+    )
+    minutes_per_interval = TIME_SCALE_OPTIONS[time_scale_label]
+
     simulation_length = st.slider(
         label("How long to simulate", "Simulation Length", advanced_mode),
-        min_value=30,
-        max_value=300,
-        value=100,
-        step=10,
-        help="Longer timelines let you spread feeds out more clearly.",
+        min_value=20,
+        max_value=200,
+        value=80,
+        step=5,
+        help="Longer timelines let you space feed events further apart.",
     )
 
     st.header("Feeding Plan")
@@ -537,61 +769,43 @@ with st.sidebar:
         max_value=20.0,
         value=5.0,
         step=0.5,
-        help="This is how much feed is added at each feeding point.",
     )
 
-    feed_times_text = st.text_input(
-        label("When do you feed?", "Feeding Times (timesteps)", advanced_mode),
-        value="10",
-        help=(
-            "Enter points on the simulation timeline, for example: 10, 50. "
-            "That means one early feed and one later feed."
-            if not advanced_mode
-            else "Enter feeding times in timesteps, for example: 10, 50"
-        ),
-    )
+    use_slider_events = st.toggle("Use feed-event sliders", value=True)
+
+    if use_slider_events:
+        number_of_feeds = st.slider("How many times do you feed?", 0, 5, 1)
+        feed_times: List[int] = []
+        default_points = [10, 25, 40, 55, 70]
+        for i in range(number_of_feeds):
+            default_value = default_points[i] if i < len(default_points) else min(10 + (i * 10), simulation_length - 1)
+            feed_time = st.slider(
+                f"Feed {i + 1} timing",
+                min_value=0,
+                max_value=simulation_length - 1,
+                value=min(default_value, simulation_length - 1),
+                step=1,
+            )
+            feed_times.append(feed_time)
+        feed_times = sorted(set(feed_times))
+        feed_times_text = ", ".join(str(x) for x in feed_times)
+    else:
+        feed_times_text = st.text_input(
+            label("When do you feed?", "Feeding Times (timesteps)", advanced_mode),
+            value="10",
+            help=(
+                "Enter points on the simulation timeline, for example: 10, 50. "
+                "That means one early feed and one later feed."
+                if not advanced_mode
+                else "Enter feeding times in timesteps, for example: 10, 50"
+            ),
+        )
+        feed_times = parse_feed_times(feed_times_text, simulation_length)
 
     if not advanced_mode:
         st.caption(
-            "Think of the timeline as a start-to-finish feeding plan. "
-            "Spread feeds out to let the tank recover."
-        )
-
-    st.caption("Example scenarios:")
-    st.caption("- Normal feeding: 10")
-    st.caption("- Double feeding: 10, 15")
-    st.caption("- Missed feeding: leave blank")
-
-    use_custom_rates = st.checkbox("Use custom model rates")
-
-    if use_custom_rates:
-        st.header(label("Advanced Settings", "Custom Model Rates", advanced_mode))
-        k_s = st.slider(
-            label("Settling", "Settling Rate (kₛ)", advanced_mode),
-            0.00,
-            0.50,
-            0.20,
-            0.01,
-        )
-        k_c = st.slider(
-            label("Consumption", "Consumption Rate (k_c)", advanced_mode),
-            0.00,
-            0.50,
-            0.10,
-            0.01,
-        )
-        k_f = st.slider(
-            label("Filtration", "Filtration Rate (k_f)", advanced_mode),
-            0.00,
-            0.50,
-            0.20,
-            0.01,
-        )
-    else:
-        k_s, k_c, k_f = map_setup_to_rates(
-            tank_type=tank_type,
-            filtration_strength=filtration_strength,
-            stocking_level=stocking_level,
+            f"One interval currently means {time_scale_label.lower()}. "
+            "Spread feeds out enough to let the tank recover."
         )
 
     st.header("Goal")
@@ -600,14 +814,53 @@ with st.sidebar:
         ["Balanced Feeding", "Minimise Waste", "Maximise Feeding Frequency"],
     )
 
-    st.header("Comparison")
+    use_custom_rates = st.checkbox("Use custom model rates (advanced)")
+
+    if use_custom_rates:
+        st.header("Advanced Model Rates")
+        k_s = st.slider("Settling Rate (kₛ)", 0.00, 0.50, 0.18, 0.01)
+        k_c = st.slider("Consumption Rate (k_c)", 0.00, 0.50, 0.10, 0.01)
+        k_f = st.slider("Filtration Rate (k_f)", 0.00, 0.50, 0.20, 0.01)
+        derived = {"turnover": turnover}
+    else:
+        k_s, k_c, k_f, derived = map_setup_to_rates(
+            tank_type=tank_type,
+            stocking_level=stocking_level,
+            tank_size_l=tank_size_l,
+            filter_type=filter_type,
+            flow_rate_lph=flow_rate_lph,
+            feed_type=feed_type,
+        )
+
     show_baseline = st.checkbox("Compare with a simple single-feed plan", value=True)
+
+    auto_optimise = st.button("Optimise my feeding plan")
+
+
+# -----------------------------
+# Auto-optimisation
+# -----------------------------
+if auto_optimise:
+    current_times = feed_times
+    improved_times, improved_amount = optimise_feed_plan(
+        current_feed_times=current_times,
+        current_feed_amount=feed_amount,
+        simulation_length=simulation_length,
+        k_s=k_s,
+        k_c=k_c,
+        k_f=k_f,
+        feed_type=feed_type,
+        goal=goal,
+    )
+    if improved_times:
+        feed_times = improved_times
+        feed_amount = improved_amount
 
 
 # -----------------------------
 # Main calculations
 # -----------------------------
-feed_times = parse_feed_times(feed_times_text, simulation_length)
+feed_times = sorted(set(feed_times))
 
 values = run_simulation(
     feed_times=feed_times,
@@ -616,6 +869,7 @@ values = run_simulation(
     k_s=k_s,
     k_c=k_c,
     k_f=k_f,
+    feed_type=feed_type,
 )
 
 baseline_times = [10] if simulation_length > 10 else [0]
@@ -626,16 +880,22 @@ baseline_values = run_simulation(
     k_s=k_s,
     k_c=k_c,
     k_f=k_f,
+    feed_type=feed_type,
 )
 
 verdict_level, verdict_text, notes, actions, metrics = build_human_interpretation(
     values=values,
     feed_times=feed_times,
+    tank_type=tank_type,
+    tank_size_l=tank_size_l,
     feed_amount=feed_amount,
     k_s=k_s,
     k_c=k_c,
     k_f=k_f,
     goal=goal,
+    turnover=turnover,
+    feed_type=feed_type,
+    minutes_per_interval=minutes_per_interval,
 )
 
 peak_value = float(metrics["peak"])
@@ -657,6 +917,9 @@ split_schedule = suggest_split_feed_schedule(feed_times, feed_amount, values, si
 
 summary_text = str(metrics["summary"])
 
+recovery_minutes = clear_steps * minutes_per_interval
+gap_minutes = gap_needed * minutes_per_interval
+
 
 # -----------------------------
 # Dynamic labels
@@ -667,7 +930,6 @@ gap_label = label("Recommended Delay Before Next Feed", "Recommended Feed Gap", 
 removal_label = label("Tank Clearing Strength", "Total Removal Rate", advanced_mode)
 load_label = label("Overall Waste Load", "Total Particle Load", advanced_mode)
 baseline_label = label("Change vs Simple Plan", "Vs Baseline Load", advanced_mode)
-timeline_word = time_unit(advanced_mode)
 
 
 # -----------------------------
@@ -677,14 +939,52 @@ st.markdown(f"### {summary_text}")
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric(peak_label, f"{peak_value:.2f}")
-m2.metric(clear_label, f"{clear_steps} {timeline_word}")
-m3.metric(gap_label, f"{gap_needed} {timeline_word}")
+m2.metric(clear_label, format_duration(recovery_minutes, advanced_mode))
+m3.metric(gap_label, format_duration(gap_minutes, advanced_mode))
 m4.metric(removal_label, f"{total_removal:.2f}")
 
 s1, s2, s3 = st.columns(3)
 s1.metric("Timing Efficiency", f"{timing_eff}/10", describe_level(timing_eff))
 s2.metric("Load Efficiency", f"{load_eff}/10", describe_level(load_eff))
 s3.metric("Overall Efficiency", f"{overall_eff}/10", describe_level(overall_eff))
+
+
+# -----------------------------
+# Real-world explanation
+# -----------------------------
+with st.expander("Real-world explanation", expanded=True):
+    st.write(f"**Tank type:** {tank_type}")
+    if tank_type == "Shrimp Tank":
+        st.write("- Shrimp tanks usually need gentler flow and are less forgiving of overfeeding.")
+    elif tank_type == "Fish Tank":
+        st.write("- Fish tanks usually tolerate larger feeding spikes, but also create more waste.")
+    else:
+        st.write("- Mixed tanks sit between shrimp-only and fish-only setups.")
+
+    st.write(f"**Stocking level:** {stocking_level}")
+    st.write(f"- {STOCKING_INFO[stocking_level]}")
+
+    st.write(f"**Filter type:** {filter_type}")
+    st.write(f"- {FILTER_TYPE_INFO[filter_type]['description']}")
+
+    st.write(f"**Flow rate:** {flow_rate_lph} L/h")
+    st.write(f"**Tank size:** {tank_size_l} L")
+    st.write(f"**Turnover:** {turnover:.1f}x per hour")
+    st.write(f"- This is considered **{filtration_strength_text.lower()} filtration** for this setup.")
+
+    if tank_type == "Shrimp Tank" and turnover > 8:
+        st.warning("This may be too much flow for a typical shrimp setup.")
+    if tank_type == "Fish Tank" and turnover < 3:
+        st.warning("This may be weak filtration for a stocked fish tank.")
+
+    st.write(f"**Feed type:** {feed_type}")
+    st.write(f"- {FEED_TYPE_INFO[feed_type]['description']}")
+
+    st.write(f"**Time scale:** one interval = {time_scale_label.lower()}")
+    st.write(
+        f"- So if the app says the tank needs about {gap_needed} intervals before the next feed, "
+        f"that means roughly **{format_duration(gap_minutes, False)}**."
+    )
 
 
 # -----------------------------
@@ -726,14 +1026,25 @@ if feed_times and gap_needed > 0:
         ax.text(
             recommended_t + 1,
             peak_value * 0.55 if peak_value > 0 else 0.5,
-            f"{label('Recommended delay', 'Recommended gap', advanced_mode)} ≈ {gap_needed}",
+            f"{label('Recommended delay', 'Recommended gap', advanced_mode)} ≈ {format_duration(gap_minutes, False)}",
             fontsize=10,
         )
 
+# Shade high-risk zone
+risk_threshold = 6.0
+ax.axhspan(risk_threshold, max(peak_value + 1, risk_threshold + 1), alpha=0.08, color="red")
+ax.text(
+    1,
+    risk_threshold + 0.15,
+    "High waste zone",
+    fontsize=9,
+)
+
+# Shade recovery area after first feed
 if feed_times and clear_steps > 0:
     start = feed_times[0]
     end = min(feed_times[0] + clear_steps, simulation_length - 1)
-    ax.axvspan(start, end, alpha=0.08)
+    ax.axvspan(start, end, alpha=0.06, color="green")
 
 for ft in feed_times:
     if 0 <= ft < len(values):
@@ -741,7 +1052,7 @@ for ft in feed_times:
         ax.annotate(
             "Feed spike",
             xy=(ft, local_y),
-            xytext=(ft + 3, local_y + 0.5),
+            xytext=(ft + 2, local_y + 0.4),
             arrowprops={"arrowstyle": "->"},
             fontsize=9,
         )
@@ -778,8 +1089,13 @@ if show_baseline:
 # -----------------------------
 with st.expander("Current Setup Summary", expanded=False):
     st.write(f"**Tank Type:** {tank_type}")
-    st.write(f"**Filtration Strength:** {filtration_strength}")
+    st.write(f"**Tank Size:** {tank_size_l}L")
+    st.write(f"**Filter Type:** {filter_type}")
+    st.write(f"**Filter Flow:** {flow_rate_lph} L/h")
+    st.write(f"**Turnover:** {turnover:.1f}x per hour")
     st.write(f"**Stocking Level:** {stocking_level}")
+    st.write(f"**Feed Type:** {feed_type}")
+    st.write(f"**Time Scale:** {time_scale_label}")
     st.write(f"**Goal:** {goal}")
     if advanced_mode or use_custom_rates:
         st.write(f"**Model Rates:** kₛ = {k_s:.2f}, k_c = {k_c:.2f}, k_f = {k_f:.2f}")
@@ -806,10 +1122,7 @@ left, right = st.columns(2)
 with left:
     st.subheader("What’s happening")
     for note in notes:
-        display_note = note.replace("intervals", timeline_word)
-        if not advanced_mode:
-            display_note = display_note.replace("Tank clearing strength", "Tank clearing strength")
-        st.write(f"- {display_note}")
+        st.write(f"- {note}")
 
 with right:
     st.subheader("What you should do")
@@ -817,7 +1130,8 @@ with right:
         st.write(f"- {action}")
 
     if better_spacing:
-        st.write(f"- Try feeding at: {better_spacing}")
+        better_gap_text = ", ".join(str(x) for x in better_spacing)
+        st.write(f"- Try feeding at these timeline points: {better_gap_text}")
 
     if suggested_feed_amount < feed_amount:
         st.write(f"- Lower feed amount suggestion: about {suggested_feed_amount} per feed.")
@@ -833,12 +1147,12 @@ with right:
 st.subheader("Scenario Compare Mode")
 
 normal_times = [10] if simulation_length > 10 else [0]
-double_times = [10, 15] if simulation_length > 15 else [0, min(5, simulation_length - 1)]
+double_times = [10, min(25, simulation_length - 1)] if simulation_length > 25 else [0, min(5, simulation_length - 1)]
 missed_times: List[int] = []
 
-normal_values = run_simulation(normal_times, simulation_length, feed_amount, k_s, k_c, k_f)
-double_values = run_simulation(double_times, simulation_length, feed_amount, k_s, k_c, k_f)
-missed_values = run_simulation(missed_times, simulation_length, feed_amount, k_s, k_c, k_f)
+normal_values = run_simulation(normal_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
+double_values = run_simulation(double_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
+missed_values = run_simulation(missed_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
 
 sc1, sc2, sc3 = st.columns(3)
 
@@ -862,26 +1176,6 @@ with sc3:
 
 
 # -----------------------------
-# Quick scenarios
-# -----------------------------
-st.subheader("Quick Scenario Ideas")
-
-q1, q2, q3 = st.columns(3)
-
-with q1:
-    st.markdown("**Normal Feeding**")
-    st.code("10", language=None)
-
-with q2:
-    st.markdown("**Double Feeding**")
-    st.code("10, 15", language=None)
-
-with q3:
-    st.markdown("**Missed Feeding**")
-    st.write("Leave the field blank")
-
-
-# -----------------------------
 # Advanced model details
 # -----------------------------
 if advanced_mode:
@@ -901,8 +1195,14 @@ if advanced_mode:
 # -----------------------------
 report_text = make_export_report(
     tank_type=tank_type,
-    filtration_strength=filtration_strength,
+    tank_size_l=tank_size_l,
+    filter_type=filter_type,
+    flow_rate_lph=flow_rate_lph,
+    turnover=turnover,
+    filtration_strength_text=filtration_strength_text,
     stocking_level=stocking_level,
+    feed_type=feed_type,
+    time_scale_label=time_scale_label,
     simulation_length=simulation_length,
     feed_amount=feed_amount,
     feed_times=feed_times,
