@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import time
 from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
@@ -15,22 +16,106 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("Feeding Optimisation Tool")
-st.write(
-    "Plan feeding more clearly by seeing how waste builds up and clears under different "
-    "tank conditions."
-)
+
+# -----------------------------
+# Constants / lookup tables
+# -----------------------------
+TIME_SCALE_OPTIONS = {
+    "1 minute": 1,
+    "5 minutes": 5,
+    "15 minutes": 15,
+    "30 minutes": 30,
+    "1 hour": 60,
+}
+
+FILTER_TYPE_INFO: Dict[str, Dict[str, float | str]] = {
+    "Sponge filter": {
+        "efficiency": 0.72,
+        "description": "Gentle flow and strong biological filtration. Best suited to shrimp, fry, and low-waste tanks.",
+    },
+    "Internal filter": {
+        "efficiency": 0.95,
+        "description": "Moderate all-round filtration. Common in standard home tanks.",
+    },
+    "Hang-on-back": {
+        "efficiency": 1.05,
+        "description": "Good surface movement with moderate mechanical filtration.",
+    },
+    "Canister filter": {
+        "efficiency": 1.20,
+        "description": "Strong mechanical and biological filtration. Best for larger or heavier-waste tanks.",
+    },
+}
+
+FEED_TYPE_INFO: Dict[str, Dict[str, float | str]] = {
+    "Pellets": {
+        "spike_multiplier": 1.00,
+        "linger_modifier": 1.00,
+        "description": "Moderate spike and moderate decay. Good all-round reference food.",
+        "mass_hint": "roughly a small measured portion",
+    },
+    "Flakes": {
+        "spike_multiplier": 1.20,
+        "linger_modifier": 1.08,
+        "description": "Break up quickly and can create a sharper waste spike if overfed.",
+        "mass_hint": "roughly a medium pinch",
+    },
+    "Powder / shrimp food": {
+        "spike_multiplier": 1.35,
+        "linger_modifier": 1.12,
+        "description": "Spreads rapidly through the water column and can spike waste quickly.",
+        "mass_hint": "roughly a dusting or tiny pinch",
+    },
+    "Frozen / live food": {
+        "spike_multiplier": 1.15,
+        "linger_modifier": 0.92,
+        "description": "Usually richer and messier, but often not as instantly dispersed as powder.",
+        "mass_hint": "roughly a small cube or small chunk equivalent",
+    },
+    "Slow-release / wafers / snowflake": {
+        "spike_multiplier": 0.70,
+        "linger_modifier": 0.65,
+        "description": "Releases waste more gradually and tends to linger longer.",
+        "mass_hint": "roughly one wafer or small piece",
+    },
+}
+
+STOCKING_INFO = {
+    "Light": "Few animals for the tank size. Lower waste production.",
+    "Moderate": "Typical home stocking level. Balanced waste production.",
+    "Heavy": "High population for the tank size. Higher waste production and less margin for error.",
+}
+
+MATURITY_INFO = {
+    "New (<1 month)": "Less biologically stable. Waste is usually handled less efficiently.",
+    "Established (1–6 months)": "More stable and predictable than a new setup.",
+    "Mature (6+ months)": "Usually more biologically resilient and forgiving.",
+}
+
+SUBSTRATE_INFO = {
+    "Bare bottom": "Minimal extra biological surface area. Easier to clean but less forgiving.",
+    "Standard substrate": "Typical balance of cleanliness and biological support.",
+    "Heavily planted / biofilm-rich": "More surfaces for microorganisms and slower, steadier breakdown.",
+}
+
+SIMPLE_FEED_LEVELS = {
+    "Very light": 2.0,
+    "Light": 3.5,
+    "Normal": 5.0,
+    "Heavy": 7.5,
+    "Very heavy": 10.0,
+}
 
 
 # -----------------------------
-# Helpers
+# General helpers
 # -----------------------------
 def label(simple: str, advanced: str, advanced_mode: bool) -> str:
     return advanced if advanced_mode else simple
 
 
 def safe_div(a: float, b: float) -> float:
-    return a / b if b != 0 else 0.0
+    return a / b if b else 0.0
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -47,11 +132,10 @@ def format_duration(minutes: float) -> str:
     return f"{days:.1f} days"
 
 
-def timeline_to_real_time_text(points: List[int], minutes_per_interval: int) -> str:
+def real_time_text(points: List[int], minutes_per_interval: int) -> str:
     if not points:
         return "None"
-    converted = [format_duration(p * minutes_per_interval) for p in points]
-    return ", ".join(converted)
+    return ", ".join(format_duration(p * minutes_per_interval) for p in points)
 
 
 def turnover_judgement(turnover: float, tank_type: str) -> str:
@@ -61,12 +145,11 @@ def turnover_judgement(turnover: float, tank_type: str) -> str:
         if turnover < 7:
             return "Moderate"
         return "High"
-    else:
-        if turnover < 3:
-            return "Low"
-        if turnover < 6:
-            return "Moderate"
-        return "High"
+    if turnover < 3:
+        return "Low"
+    if turnover < 6:
+        return "Moderate"
+    return "High"
 
 
 def clearing_label(total_removal: float) -> str:
@@ -85,69 +168,64 @@ def efficiency_word(score: float) -> str:
     return "Poor"
 
 
+def risk_word(score: float) -> str:
+    if score >= 8:
+        return "Low"
+    if score >= 5:
+        return "Moderate"
+    return "High"
+
+
 # -----------------------------
-# Real-world profiles
+# Real-world anchoring
 # -----------------------------
-TIME_SCALE_OPTIONS = {
-    "1 minute": 1,
-    "5 minutes": 5,
-    "15 minutes": 15,
-    "30 minutes": 30,
-    "1 hour": 60,
-}
+def estimate_biomass_g(tank_type: str, tank_size_l: int, stocking_level: str) -> float:
+    """
+    Rough biomass estimate used only for practical feed equivalents.
+    This is deliberately approximate, not a scientific measurement.
+    """
+    if tank_type == "Shrimp Tank":
+        density = {
+            "Light": 0.18,
+            "Moderate": 0.35,
+            "Heavy": 0.60,
+        }[stocking_level]
+    elif tank_type == "Fish Tank":
+        density = {
+            "Light": 0.50,
+            "Moderate": 1.10,
+            "Heavy": 2.00,
+        }[stocking_level]
+    else:
+        density = {
+            "Light": 0.30,
+            "Moderate": 0.70,
+            "Heavy": 1.20,
+        }[stocking_level]
 
-FILTER_TYPE_INFO = {
-    "Sponge filter": {
-        "efficiency": 0.72,
-        "description": "Gentle flow, high biological filtration, best suited to shrimp and fry.",
-    },
-    "Internal filter": {
-        "efficiency": 0.95,
-        "description": "Moderate all-round filtration, common in standard home tanks.",
-    },
-    "Hang-on-back": {
-        "efficiency": 1.05,
-        "description": "Good surface movement and moderate mechanical filtration.",
-    },
-    "Canister filter": {
-        "efficiency": 1.20,
-        "description": "Strong mechanical and biological filtration, good for heavier waste loads.",
-    },
-}
+    return round(tank_size_l * density, 1)
 
-FEED_TYPE_INFO = {
-    "Pellets": {
-        "spike_multiplier": 1.00,
-        "linger_modifier": 1.00,
-        "description": "Moderate spike, moderate decay. Good all-round reference food.",
-    },
-    "Flakes": {
-        "spike_multiplier": 1.20,
-        "linger_modifier": 1.08,
-        "description": "Break up quickly and create a sharper waste spike if overfed.",
-    },
-    "Powder / shrimp food": {
-        "spike_multiplier": 1.35,
-        "linger_modifier": 1.12,
-        "description": "Spreads very fast through the water column and can spike waste quickly.",
-    },
-    "Frozen / live food": {
-        "spike_multiplier": 1.15,
-        "linger_modifier": 0.92,
-        "description": "Usually richer and messier, but often not as instantly dispersed as powder.",
-    },
-    "Slow-release / wafers / snowflake": {
-        "spike_multiplier": 0.70,
-        "linger_modifier": 0.65,
-        "description": "Releases waste more gradually and tends to linger longer.",
-    },
-}
 
-STOCKING_INFO = {
-    "Light": "Few animals for the tank size. Lower waste production.",
-    "Moderate": "Typical home stocking level. Balanced waste production.",
-    "Heavy": "High population for the tank size. Higher waste production and less margin for error.",
-}
+def feed_amount_to_percent_bodyweight(feed_amount: float) -> float:
+    # Rough internal mapping: 1 unit ~= 0.6% biomass per feed
+    return round(feed_amount * 0.6, 2)
+
+
+def estimated_feed_grams(feed_amount: float, biomass_g: float) -> float:
+    pct = feed_amount_to_percent_bodyweight(feed_amount) / 100
+    return round(biomass_g * pct, 3)
+
+
+def practical_feed_label(feed_amount: float) -> str:
+    if feed_amount < 2.5:
+        return "Very light"
+    if feed_amount < 4.0:
+        return "Light"
+    if feed_amount < 6.5:
+        return "Normal"
+    if feed_amount < 9.0:
+        return "Heavy"
+    return "Very heavy"
 
 
 # -----------------------------
@@ -160,6 +238,8 @@ def map_setup_to_rates(
     filter_type: str,
     flow_rate_lph: int,
     feed_type: str,
+    tank_maturity: str,
+    substrate_type: str,
 ) -> Tuple[float, float, float, Dict[str, float | str]]:
     turnover = safe_div(flow_rate_lph, tank_size_l)
 
@@ -190,7 +270,23 @@ def map_setup_to_rates(
     else:
         tank_flow_modifier = 1.0
 
-    filtration_rate = clamp((turnover / 10.0) * filter_efficiency * tank_flow_modifier, 0.05, 0.42)
+    maturity_modifier = {
+        "New (<1 month)": 0.86,
+        "Established (1–6 months)": 1.00,
+        "Mature (6+ months)": 1.10,
+    }[tank_maturity]
+
+    substrate_modifier = {
+        "Bare bottom": 0.92,
+        "Standard substrate": 1.00,
+        "Heavily planted / biofilm-rich": 1.12,
+    }[substrate_type]
+
+    filtration_rate = clamp(
+        (turnover / 10.0) * filter_efficiency * tank_flow_modifier * maturity_modifier,
+        0.05,
+        0.45,
+    )
 
     size_modifier = 1.0
     if tank_size_l <= 30:
@@ -198,21 +294,14 @@ def map_setup_to_rates(
     elif tank_size_l >= 150:
         size_modifier = 1.08
 
-    settling_rate = clamp(base_settling * size_modifier, 0.05, 0.30)
-    consumption_rate = clamp(base_consumption * size_modifier, 0.03, 0.22)
-
-    settling_rate *= feed_linger
-    consumption_rate *= clamp(feed_linger, 0.65, 1.15)
-
-    settling_rate = clamp(settling_rate, 0.04, 0.32)
-    consumption_rate = clamp(consumption_rate, 0.03, 0.24)
+    settling_rate = clamp(base_settling * size_modifier * feed_linger, 0.04, 0.32)
+    consumption_rate = clamp(base_consumption * size_modifier * feed_linger * substrate_modifier * maturity_modifier, 0.03, 0.26)
 
     derived = {
         "turnover": turnover,
         "filter_efficiency": filter_efficiency,
         "feed_linger": feed_linger,
     }
-
     return settling_rate, consumption_rate, filtration_rate, derived
 
 
@@ -234,14 +323,12 @@ def run_simulation(
 ) -> List[float]:
     p = 0.0
     results: List[float] = []
-
     total_removal = k_s + k_c + k_f
     spike_multiplier = get_feed_multiplier(feed_type)
 
     for t in range(simulation_length):
         if t in feed_times:
             p += feed_amount * spike_multiplier
-
         p = p - total_removal * p
         p = max(p, 0.0)
         results.append(p)
@@ -260,18 +347,12 @@ def max_value(values: List[float]) -> float:
     return max(values) if values else 0.0
 
 
-def time_to_threshold_after_feed(
-    values: List[float],
-    start_index: int,
-    threshold: float,
-) -> int | None:
+def time_to_threshold_after_feed(values: List[float], start_index: int, threshold: float) -> int | None:
     if not values or start_index >= len(values):
         return None
-
     for i in range(start_index, len(values)):
         if values[i] <= threshold:
             return i - start_index
-
     return None
 
 
@@ -295,16 +376,13 @@ def time_to_baseline(values: List[float], absolute_threshold: float = 0.05) -> i
 def detect_overlap(values: List[float], feed_times: List[int]) -> bool:
     if len(feed_times) < 2 or not values:
         return False
-
     first_peak = max_value(values)
     if first_peak <= 0:
         return False
-
     threshold = first_peak * 0.20
     for ft in feed_times[1:]:
         if 0 <= ft < len(values) and values[ft] > threshold:
             return True
-
     return False
 
 
@@ -325,57 +403,38 @@ def recommended_gap(values: List[float]) -> int | None:
 def timing_score(values: List[float], feed_times: List[int]) -> float:
     if not feed_times:
         return 0.0
-
     gap_needed = recommended_gap(values)
     if len(feed_times) < 2:
         return 10.0
-
     avg_gap = average_feed_gap(feed_times)
     if gap_needed is None or avg_gap is None:
         return 5.0
-
     overlap_penalty = 3.0 if detect_overlap(values, feed_times) else 0.0
     ratio = avg_gap / gap_needed if gap_needed > 0 else 1.0
     score = 10.0 * clamp(ratio, 0.0, 1.0) - overlap_penalty
-
     if avg_gap >= gap_needed:
         score = min(10.0, score + 2.0)
-
     return round(clamp(score, 0.0, 10.0), 1)
 
 
-def load_score(
-    peak: float,
-    total_load: float,
-    number_of_feeds: int,
-    goal: str,
-) -> float:
+def load_score(peak: float, total_load: float, number_of_feeds: int, goal: str) -> float:
     if number_of_feeds == 0:
         return 0.0
-
     peak_penalty = peak / 1.5
     load_penalty = total_load / 12.0
     score = 10.0 - peak_penalty - load_penalty
-
     if goal == "Minimise Waste":
         score -= 1.0 if peak > 5 else 0.0
     elif goal == "Maximise Feeding Frequency":
         score += 0.5
-
     return round(clamp(score, 0.0, 10.0), 1)
 
 
 def overall_efficiency_score(timing: float, load: float) -> float:
-    score = (timing * 0.45) + (load * 0.55)
-    return round(clamp(score, 0.0, 10.0), 1)
+    return round(clamp((timing * 0.45) + (load * 0.55), 0.0, 10.0), 1)
 
 
-def generate_summary(
-    overlap: bool,
-    peak: float,
-    gap_ok: bool,
-    goal: str,
-) -> str:
+def generate_summary(overlap: bool, peak: float, gap_ok: bool, goal: str) -> str:
     if overlap and peak > 6:
         return "Your feeds are too close together and each feed is also too heavy for this setup."
     if overlap:
@@ -452,12 +511,8 @@ def build_human_interpretation(
     notes.append(f"Feed type selected: {feed_type}.")
 
     if len(feed_times) >= 2 and avg_gap is not None:
-        notes.append(
-            f"Average time between feeds is about {format_duration(avg_gap * minutes_per_interval)}."
-        )
-        notes.append(
-            f"Recommended minimum delay for this setup is about {format_duration(gap_minutes)}."
-        )
+        notes.append(f"Average time between feeds is about {format_duration(avg_gap * minutes_per_interval)}.")
+        notes.append(f"Recommended minimum delay for this setup is about {format_duration(gap_minutes)}.")
 
     if turnover < 3:
         notes.append("Filtration is on the weak side for faster waste clearance.")
@@ -526,31 +581,22 @@ def build_human_interpretation(
 def suggest_better_spacing(feed_times: List[int], values: List[float], simulation_length: int) -> List[int]:
     if not feed_times or len(feed_times) < 2:
         return []
-
     gap = recommended_gap(values)
     if gap is None:
         return []
-
     suggested = [feed_times[0]]
     for _ in range(1, len(feed_times)):
         next_time = suggested[-1] + gap
         if next_time < simulation_length:
             suggested.append(next_time)
-
     return suggested
 
 
-def suggest_reduced_feed_amount(
-    feed_amount: float,
-    peak: float,
-    target_peak: float = 5.0,
-) -> float:
+def suggest_reduced_feed_amount(feed_amount: float, peak: float, target_peak: float = 5.0) -> float:
     if peak <= target_peak:
         return round(feed_amount, 2)
-
     ratio = target_peak / peak
-    suggested = feed_amount * ratio
-    return round(max(0.5, suggested), 2)
+    return round(max(0.5, feed_amount * ratio), 2)
 
 
 def suggest_split_feed_schedule(
@@ -562,14 +608,10 @@ def suggest_split_feed_schedule(
 ) -> Tuple[List[int], float] | None:
     peak = max_value(values)
     load = area_under_curve(values)
-
-    # Only show this when it is actually useful
     if peak <= 5 and load <= 10 and goal != "Maximise Feeding Frequency":
         return None
-
     if not feed_times:
         return None
-
     gap = recommended_gap(values)
     if gap is None:
         return None
@@ -584,10 +626,8 @@ def suggest_split_feed_schedule(
         t = start + (i * gap)
         if t < simulation_length:
             suggested.append(t)
-
     if len(suggested) < 2:
         return None
-
     return suggested, new_amount
 
 
@@ -616,10 +656,8 @@ def optimise_feed_plan(
     better_times = suggest_better_spacing(current_feed_times, test_values, simulation_length)
     peak = max_value(test_values)
     better_amount = current_feed_amount
-
     if goal in ["Minimise Waste", "Balanced Feeding"]:
         better_amount = suggest_reduced_feed_amount(current_feed_amount, peak)
-
     return better_times, better_amount
 
 
@@ -692,140 +730,133 @@ def make_export_report(
     if suggested_feed_amount < feed_amount:
         lines.append(f"- Lower feed amount suggestion: {suggested_feed_amount}")
     if split_schedule is not None:
-        lines.append(
-            f"- Split-feed suggestion: times {split_schedule[0]} with about {split_schedule[1]} per event"
-        )
-
+        lines.append(f"- Split-feed suggestion: times {split_schedule[0]} with about {split_schedule[1]} per event")
     return "\n".join(lines)
 
 
 # -----------------------------
-# Sidebar
+# Sidebar / input UI
 # -----------------------------
 with st.sidebar:
     st.header("View")
     advanced_mode = st.toggle("Show advanced terms", value=False)
 
     st.header("Tank Setup")
-
-    tank_type = st.selectbox(
-        "Tank Type",
-        ["Shrimp Tank", "Fish Tank", "Mixed Tank", "Custom"],
-    )
-
-    tank_size_l = st.slider(
-        "Tank size (litres)",
-        min_value=10,
-        max_value=500,
-        value=60,
-        step=5,
-        help="Bigger tanks dilute waste more and usually recover more steadily.",
-    )
-
-    filter_type = st.selectbox(
-        "Filter type",
-        ["Sponge filter", "Internal filter", "Hang-on-back", "Canister filter"],
-    )
-
-    flow_rate_lph = st.slider(
-        "Filter flow rate (L/h)",
-        min_value=50,
-        max_value=3000,
-        value=300,
-        step=25,
-        help="How much water the filter moves per hour.",
-    )
-
-    stocking_level = st.selectbox(
-        "Stocking Level",
-        ["Light", "Moderate", "Heavy"],
-        index=1,
-    )
-
-    feed_type = st.selectbox(
-        "Feed type",
-        ["Pellets", "Flakes", "Powder / shrimp food", "Frozen / live food", "Slow-release / wafers / snowflake"],
-    )
-
-    st.caption(STOCKING_INFO[stocking_level])
-    st.caption(FILTER_TYPE_INFO[filter_type]["description"])
-    st.caption(FEED_TYPE_INFO[feed_type]["description"])
+    tank_type = st.selectbox("Tank Type", ["Shrimp Tank", "Fish Tank", "Mixed Tank", "Custom"])
+    tank_size_l = st.slider("Tank size (litres)", 10, 500, 60, 5)
+    tank_maturity = st.selectbox("Tank maturity", list(MATURITY_INFO.keys()), index=1)
+    substrate_type = st.selectbox("Substrate / biofilm level", list(SUBSTRATE_INFO.keys()), index=1)
+    filter_type = st.selectbox("Filter type", list(FILTER_TYPE_INFO.keys()))
+    flow_rate_lph = st.slider("Filter flow rate (L/h)", 50, 3000, 300, 25)
+    stocking_level = st.selectbox("Stocking Level", ["Light", "Moderate", "Heavy"], index=1)
+    feed_type = st.selectbox("Feed type", list(FEED_TYPE_INFO.keys()))
 
     turnover = safe_div(flow_rate_lph, tank_size_l)
     filtration_strength_text = turnover_judgement(turnover, tank_type)
+
+    st.caption(STOCKING_INFO[stocking_level])
+    st.caption(MATURITY_INFO[tank_maturity])
+    st.caption(SUBSTRATE_INFO[substrate_type])
+    st.caption(FILTER_TYPE_INFO[filter_type]["description"])
+    st.caption(FEED_TYPE_INFO[feed_type]["description"])
     st.caption(f"Estimated turnover: {turnover:.1f}x per hour ({filtration_strength_text.lower()} filtration)")
 
-    time_scale_label = st.selectbox(
-        "What does one interval represent?",
-        list(TIME_SCALE_OPTIONS.keys()),
-        index=2,
-    )
+    time_scale_label = st.selectbox("What does one interval represent?", list(TIME_SCALE_OPTIONS.keys()), index=2)
     minutes_per_interval = TIME_SCALE_OPTIONS[time_scale_label]
 
     simulation_length = st.slider(
         label("How long to simulate", "Simulation Length", advanced_mode),
-        min_value=20,
-        max_value=200,
-        value=80,
-        step=5,
-        help=(
-            f"This is the total timeline the app looks at. "
-            f"At {time_scale_label.lower()} per interval, {80} intervals would be about {format_duration(80 * minutes_per_interval)}."
-        ),
+        20,
+        200,
+        80,
+        5,
+        help="This is the total timeline the app looks at.",
     )
-
-    st.caption(
-        f"Current timeline length: about {format_duration(simulation_length * minutes_per_interval)} total."
-    )
+    st.caption(f"Current timeline length: about {format_duration(simulation_length * minutes_per_interval)} total.")
 
     st.header("Feeding Plan")
+    feed_input_mode = st.radio("Feed amount input", ["Simple", "Advanced"], horizontal=True)
 
-    feed_amount = st.slider(
-        label("Feed amount each time", "Feed Amount per Event", advanced_mode),
-        min_value=0.5,
-        max_value=20.0,
-        value=5.0,
-        step=0.5,
-    )
+    biomass_g = estimate_biomass_g(tank_type, tank_size_l, stocking_level)
 
-    use_slider_events = st.toggle("Use feed-event sliders", value=True)
-
-    if use_slider_events:
-        number_of_feeds = st.slider("How many times do you feed?", 0, 5, 1)
-        feed_times: List[int] = []
-        default_points = [10, 25, 40, 55, 70]
-        for i in range(number_of_feeds):
-            default_value = default_points[i] if i < len(default_points) else min(10 + (i * 10), simulation_length - 1)
-            feed_time = st.slider(
-                f"Feed {i + 1} timing",
-                min_value=0,
-                max_value=simulation_length - 1,
-                value=min(default_value, simulation_length - 1),
-                step=1,
-            )
-            feed_times.append(feed_time)
-        feed_times = sorted(set(feed_times))
-    else:
-        text_times = st.text_input(
-            label("When do you feed?", "Feeding Times (timesteps)", advanced_mode),
-            value="10",
+    if feed_input_mode == "Simple":
+        feed_level = st.select_slider(
+            "Feed size",
+            options=list(SIMPLE_FEED_LEVELS.keys()),
+            value="Normal",
         )
-        feed_times = sorted(set(int(x.strip()) for x in text_times.split(",") if x.strip().isdigit()))
+        feed_amount = SIMPLE_FEED_LEVELS[feed_level]
+    else:
+        feed_amount = st.slider(
+            label("Feed amount each time", "Feed Amount per Event", advanced_mode),
+            0.5,
+            20.0,
+            5.0,
+            0.5,
+        )
+        feed_level = practical_feed_label(feed_amount)
+
+    approx_pct_bw = feed_amount_to_percent_bodyweight(feed_amount)
+    approx_grams = estimated_feed_grams(feed_amount, biomass_g)
+
+    st.caption(
+        f"Practical guide: **{feed_level}** feed size. Roughly **{approx_pct_bw:.1f}%** of estimated livestock biomass per feed, or about **{approx_grams}g** for this setup."
+    )
+    st.caption(f"Estimated livestock biomass for this setup: about **{biomass_g}g** total.")
+    st.caption(f"This is an estimate, not an exact weight. Feed type chosen: {FEED_TYPE_INFO[feed_type]['mass_hint']}.")
+
+    schedule_mode = st.radio("Schedule mode", ["Daily schedule", "Timeline"], horizontal=True)
+
+    if schedule_mode == "Daily schedule":
+        feeds_per_day = st.slider("How many feeds per day?", 0, 5, 1)
+        # full day in intervals
+        simulation_length = max(simulation_length, int((24 * 60) / minutes_per_interval))
+        days_to_simulate = st.slider("How many days to simulate?", 1, 7, 1)
+
+        daily_points: List[int] = []
+        for i in range(feeds_per_day):
+            default_hour = [9, 18, 21, 12, 15][i] if i < 5 else 9
+            feed_clock = st.time_input(f"Feed {i + 1} time", value=time(default_hour, 0), step=900)
+            minutes_from_start = feed_clock.hour * 60 + feed_clock.minute
+            interval_point = int(round(minutes_from_start / minutes_per_interval))
+            daily_points.append(interval_point)
+
+        one_day_intervals = int((24 * 60) / minutes_per_interval)
+        feed_times: List[int] = []
+        for day in range(days_to_simulate):
+            for p in daily_points:
+                feed_times.append(p + (day * one_day_intervals))
+        simulation_length = one_day_intervals * days_to_simulate
+        st.caption(f"Timeline now covers about {days_to_simulate} day(s).")
+    else:
+        use_slider_events = st.toggle("Use feed-event sliders", value=True)
+        if use_slider_events:
+            number_of_feeds = st.slider("How many times do you feed?", 0, 5, 1)
+            feed_times = []
+            default_points = [10, 25, 40, 55, 70]
+            for i in range(number_of_feeds):
+                default_value = default_points[i] if i < len(default_points) else min(10 + (i * 10), simulation_length - 1)
+                feed_time = st.slider(
+                    f"Feed {i + 1} timing",
+                    0,
+                    simulation_length - 1,
+                    min(default_value, simulation_length - 1),
+                    1,
+                )
+                feed_times.append(feed_time)
+        else:
+            text_times = st.text_input(
+                label("When do you feed?", "Feeding Times (timesteps)", advanced_mode),
+                value="10",
+            )
+            feed_times = sorted(set(int(x.strip()) for x in text_times.split(",") if x.strip().isdigit()))
 
     if not advanced_mode:
-        st.caption(
-            f"One interval currently means {time_scale_label.lower()}. "
-            "Spread feeds out enough to let the tank recover."
-        )
+        st.caption(f"One interval currently means {time_scale_label.lower()}. Spread feeds out enough to let the tank recover.")
 
-    st.header("Goal")
-    goal = st.selectbox(
-        "Optimisation Goal",
-        ["Balanced Feeding", "Minimise Waste", "Maximise Feeding Frequency"],
-    )
+    goal = st.selectbox("Optimisation Goal", ["Balanced Feeding", "Minimise Waste", "Maximise Feeding Frequency"])
 
     use_custom_rates = st.checkbox("Use custom model rates (advanced)")
-
     if use_custom_rates:
         st.header("Advanced Model Rates")
         k_s = st.slider("Settling Rate (kₛ)", 0.00, 0.50, 0.18, 0.01)
@@ -839,10 +870,11 @@ with st.sidebar:
             filter_type=filter_type,
             flow_rate_lph=flow_rate_lph,
             feed_type=feed_type,
+            tank_maturity=tank_maturity,
+            substrate_type=substrate_type,
         )
 
     show_baseline = st.checkbox("Compare with a simple single-feed plan", value=True)
-
     auto_optimise = st.button("Optimise my feeding plan")
 
 
@@ -863,6 +895,9 @@ if auto_optimise:
     if improved_times:
         feed_times = improved_times
     feed_amount = improved_amount
+    approx_pct_bw = feed_amount_to_percent_bodyweight(feed_amount)
+    approx_grams = estimated_feed_grams(feed_amount, biomass_g)
+    feed_level = practical_feed_label(feed_amount)
 
 
 # -----------------------------
@@ -870,26 +905,9 @@ if auto_optimise:
 # -----------------------------
 feed_times = sorted(set([t for t in feed_times if 0 <= t < simulation_length]))
 
-values = run_simulation(
-    feed_times=feed_times,
-    simulation_length=simulation_length,
-    feed_amount=feed_amount,
-    k_s=k_s,
-    k_c=k_c,
-    k_f=k_f,
-    feed_type=feed_type,
-)
-
+values = run_simulation(feed_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
 baseline_times = [10] if simulation_length > 10 else [0]
-baseline_values = run_simulation(
-    feed_times=baseline_times,
-    simulation_length=simulation_length,
-    feed_amount=feed_amount,
-    k_s=k_s,
-    k_c=k_c,
-    k_f=k_f,
-    feed_type=feed_type,
-)
+baseline_values = run_simulation(baseline_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
 
 verdict_level, verdict_text, notes, actions, metrics = build_human_interpretation(
     values=values,
@@ -914,202 +932,254 @@ total_load = float(metrics["total_load"])
 timing_eff = float(metrics["timing_score"])
 load_eff = float(metrics["load_score"])
 overall_eff = float(metrics["overall_score"])
-
 baseline_load = area_under_curve(baseline_values)
 vs_baseline_load = total_load - baseline_load
-
 better_spacing = suggest_better_spacing(feed_times, values, simulation_length)
 suggested_feed_amount = suggest_reduced_feed_amount(feed_amount, peak_value)
 split_schedule = suggest_split_feed_schedule(feed_times, feed_amount, values, simulation_length, goal)
-
 summary_text = str(metrics["summary"])
-
 recovery_minutes = clear_steps * minutes_per_interval
 gap_minutes = gap_needed * minutes_per_interval
 
-
-# -----------------------------
-# Dynamic labels
-# -----------------------------
 peak_label = label("Highest Waste Spike", "Peak Concentration", advanced_mode)
 clear_label = label("Tank Recovery Time", "Time to Clear", advanced_mode)
 gap_label = label("Recommended Delay Before Next Feed", "Recommended Feed Gap", advanced_mode)
-removal_label = label("Tank Clearing Strength", "Total Removal Rate", advanced_mode)
+removal_label = label("Tank Clearing Speed", "Total Removal Rate", advanced_mode)
 load_label = label("Overall Waste Load", "Total Particle Load", advanced_mode)
 baseline_label = label("Change vs Simple Plan", "Vs Baseline Load", advanced_mode)
 
 
 # -----------------------------
-# Top summary
+# Main UI tabs
 # -----------------------------
-st.markdown(f"### {summary_text}")
+overview_tab, graph_tab, why_tab, advanced_tab = st.tabs([
+    "Overview",
+    "Graph & Compare",
+    "What it means",
+    "Advanced",
+])
 
-m1, m2, m3, m4 = st.columns(4)
-m1.metric(peak_label, f"{peak_value:.2f}")
-m2.metric(clear_label, format_duration(recovery_minutes))
-m3.metric(gap_label, format_duration(gap_minutes))
-m4.metric(
-    removal_label if advanced_mode else "Tank Clearing Speed",
-    f"{total_removal:.2f}" if advanced_mode else clearing_label(total_removal),
-)
+with overview_tab:
+    st.markdown(f"### {summary_text}")
 
-s1, s2, s3 = st.columns(3)
-s1.metric("Timing Efficiency", f"{timing_eff}/10", efficiency_word(timing_eff))
-s2.metric("Load Efficiency", f"{load_eff}/10", efficiency_word(load_eff))
-s3.metric("Overall Efficiency", f"{overall_eff}/10", efficiency_word(overall_eff))
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric(peak_label, f"{peak_value:.2f}")
+    m2.metric(clear_label, format_duration(recovery_minutes))
+    m3.metric(gap_label, format_duration(gap_minutes))
+    m4.metric(removal_label, f"{total_removal:.2f}" if advanced_mode else clearing_label(total_removal))
 
+    s1, s2, s3 = st.columns(3)
+    s1.metric("Timing Efficiency", f"{timing_eff}/10", efficiency_word(timing_eff))
+    s2.metric("Load Efficiency", f"{load_eff}/10", efficiency_word(load_eff))
+    s3.metric("Waste Risk", risk_word(overall_eff), f"{overall_eff}/10")
 
-# -----------------------------
-# Real-world explanation
-# -----------------------------
-with st.expander("Real-world explanation", expanded=True):
-    st.write(f"**Tank type:** {tank_type}")
-    if tank_type == "Shrimp Tank":
-        st.write("- Shrimp tanks usually need gentler flow and are less forgiving of overfeeding.")
-    elif tank_type == "Fish Tank":
-        st.write("- Fish tanks usually tolerate larger feeding spikes, but also create more waste.")
-    else:
-        st.write("- Mixed tanks sit between shrimp-only and fish-only setups.")
-
-    st.write(f"**Stocking level:** {stocking_level}")
-    st.write(f"- {STOCKING_INFO[stocking_level]}")
-
-    st.write(f"**Filter type:** {filter_type}")
-    st.write(f"- {FILTER_TYPE_INFO[filter_type]['description']}")
-
-    st.write(f"**Flow rate:** {flow_rate_lph} L/h")
-    st.write(f"**Tank size:** {tank_size_l} L")
-    st.write(f"**Turnover:** {turnover:.1f}x per hour")
-    st.write(f"- This is considered **{filtration_strength_text.lower()} filtration** for this setup.")
-
-    if tank_type == "Shrimp Tank" and turnover > 8:
-        st.warning("This may be too much flow for a typical shrimp setup.")
-    if tank_type == "Fish Tank" and turnover < 3:
-        st.warning("This may be weak filtration for a stocked fish tank.")
-
-    st.write(f"**Feed type:** {feed_type}")
-    st.write(f"- {FEED_TYPE_INFO[feed_type]['description']}")
-
-    st.write(f"**Time scale:** one interval = {time_scale_label.lower()}")
-    st.write(
-        f"- So if the app says the tank needs about {gap_needed} intervals before the next feed, "
-        f"that means roughly **{format_duration(gap_minutes)}**."
+    st.subheader("Practical feed equivalent")
+    p1, p2, p3 = st.columns(3)
+    p1.metric("Feed level", practical_feed_label(feed_amount))
+    p2.metric("Approx feed per event", f"{approx_grams} g")
+    p3.metric("Approx % bodyweight", f"{approx_pct_bw:.1f}%")
+    st.caption(
+        "These feed equivalents are estimates based on tank type, stocking level, and estimated livestock biomass. "
+        "Use them as practical guidance, not exact dosing."
     )
 
+    st.subheader("Current setup at a glance")
+    g1, g2, g3, g4, g5 = st.columns(5)
+    g1.metric("Tank", tank_type)
+    g2.metric("Size", f"{tank_size_l}L")
+    g3.metric("Turnover", f"{turnover:.1f}x/h")
+    g4.metric("Filtration", filtration_strength_text)
+    g5.metric("Feed type", feed_type)
 
-# -----------------------------
-# Main graph
-# -----------------------------
-fig, ax = plt.subplots(figsize=(12, 6))
-time_axis = list(range(simulation_length))
+with graph_tab:
+    fig, ax = plt.subplots(figsize=(12, 6))
+    time_axis = list(range(simulation_length))
+    ax.plot(time_axis, values, linewidth=2.8, label="Current Strategy")
 
-ax.plot(time_axis, values, linewidth=2.8, label="Current Strategy")
+    if show_baseline:
+        ax.plot(time_axis, baseline_values, linewidth=2.2, linestyle="--", label="Baseline Single Feed")
 
-if show_baseline:
-    ax.plot(
-        time_axis,
-        baseline_values,
-        linewidth=2.2,
-        linestyle="--",
-        label="Baseline Single Feed",
-    )
+    for idx, ft in enumerate(feed_times):
+        ax.axvline(x=ft, linestyle="--", linewidth=1.3, alpha=0.6, label="Feed Event" if idx == 0 else None)
 
-for idx, ft in enumerate(feed_times):
-    ax.axvline(
-        x=ft,
-        linestyle="--",
-        linewidth=1.3,
-        alpha=0.6,
-        label="Feed Event" if idx == 0 else None,
-    )
+    if feed_times and gap_needed > 0:
+        recommended_t = feed_times[0] + gap_needed
+        if recommended_t < simulation_length:
+            ax.axvline(x=recommended_t, linestyle=":", linewidth=1.6, alpha=0.8, label="Recommended Next Feed")
+            ax.text(
+                recommended_t + 1,
+                peak_value * 0.55 if peak_value > 0 else 0.5,
+                f"Recommended delay ≈ {format_duration(gap_minutes)}",
+                fontsize=10,
+            )
 
-if feed_times and gap_needed > 0:
-    recommended_t = feed_times[0] + gap_needed
-    if recommended_t < simulation_length:
-        ax.axvline(
-            x=recommended_t,
-            linestyle=":",
-            linewidth=1.6,
-            alpha=0.8,
-            label="Recommended Next Feed",
+    # Zones
+    ax.axhspan(0, 4.0, alpha=0.05, color="green")
+    ax.axhspan(4.0, 6.0, alpha=0.05, color="gold")
+    ax.axhspan(6.0, max(peak_value + 1, 7.0), alpha=0.08, color="red")
+    ax.text(1, 2.0, "Safe zone", fontsize=9)
+    ax.text(1, 5.0, "Borderline zone", fontsize=9)
+    ax.text(1, 6.3, "High waste zone", fontsize=9)
+
+    if feed_times and clear_steps > 0:
+        start = feed_times[0]
+        end = min(feed_times[0] + clear_steps, simulation_length - 1)
+        ax.axvspan(start, end, alpha=0.06, color="green")
+
+    for ft in feed_times:
+        if 0 <= ft < len(values):
+            local_y = values[ft]
+            ax.annotate(
+                "Feed spike",
+                xy=(ft, local_y),
+                xytext=(ft + 2, local_y + 0.4),
+                arrowprops={"arrowstyle": "->"},
+                fontsize=9,
+            )
+
+    ax.set_title(label("Waste Level Over Time", "Particle Concentration Over Time", advanced_mode))
+    ax.set_xlabel(label("Timeline", "Time", advanced_mode))
+    ax.set_ylabel(label("Waste Level", "Particle Concentration", advanced_mode))
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+    plt.tight_layout()
+    st.pyplot(fig)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric(load_label, f"{total_load:.2f}")
+    c2.metric(baseline_label, f"{vs_baseline_load:+.2f}" if show_baseline else "Hidden")
+    c3.metric("Feed Events", f"{len(feed_times)}")
+
+    if show_baseline:
+        if vs_baseline_load > 2:
+            st.warning("Your current plan creates more total waste than the simple single-feed plan.")
+        elif vs_baseline_load < -2:
+            st.success("Your current plan creates less total waste than the simple single-feed plan.")
+        else:
+            st.info("Your current plan is broadly similar to the simple single-feed plan.")
+
+    st.subheader("Scenario Compare Mode")
+    normal_times = [10] if simulation_length > 10 else [0]
+    double_times = [10, min(25, simulation_length - 1)] if simulation_length > 25 else [0, min(5, simulation_length - 1)]
+    missed_times: List[int] = []
+
+    normal_values = run_simulation(normal_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
+    double_values = run_simulation(double_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
+    missed_values = run_simulation(missed_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
+
+    sc1, sc2, sc3 = st.columns(3)
+    with sc1:
+        st.markdown("**Normal Feeding**")
+        st.write(f"Timeline points: {normal_times}")
+        st.write(f"Real time: {real_time_text(normal_times, minutes_per_interval)}")
+        st.write(f"{peak_label}: {max_value(normal_values):.2f}")
+        st.write(f"{load_label}: {area_under_curve(normal_values):.2f}")
+
+    with sc2:
+        st.markdown("**Double Feeding**")
+        st.write(f"Timeline points: {double_times}")
+        st.write(f"Real time: {real_time_text(double_times, minutes_per_interval)}")
+        st.write(f"{peak_label}: {max_value(double_values):.2f}")
+        st.write(f"{load_label}: {area_under_curve(double_values):.2f}")
+
+    with sc3:
+        st.markdown("**Missed Feeding**")
+        st.write("Timeline points: None")
+        st.write("Real time: None")
+        st.write(f"{peak_label}: {max_value(missed_values):.2f}")
+        st.write(f"{load_label}: {area_under_curve(missed_values):.2f}")
+
+with why_tab:
+    left, right = st.columns(2)
+
+    with left:
+        st.subheader("What’s happening")
+        for note in notes:
+            st.write(f"- {note}")
+
+        st.subheader("What you might see in the tank")
+        if peak_value <= 4:
+            st.write("- Little to no visible leftover food")
+            st.write("- Water should remain fairly stable after feeding")
+        elif peak_value <= 6:
+            st.write("- Some leftover food may remain for a while")
+            st.write("- Mild cloudiness or visible waste is possible")
+        else:
+            st.write("- Visible leftover food is likely")
+            st.write("- Water may cloud after feeding")
+            st.write("- Waste buildup is more likely if repeated")
+
+        if detect_overlap(values, feed_times):
+            st.write("- Feeding again too soon is likely to compound waste.")
+
+    with right:
+        st.subheader("What you should do")
+        for action in actions:
+            st.write(f"- {action}")
+
+        if better_spacing:
+            st.write(
+                f"- Try feeding at these timeline points: {better_spacing} "
+                f"({real_time_text(better_spacing, minutes_per_interval)})"
+            )
+
+        if suggested_feed_amount < feed_amount:
+            reduced_grams = estimated_feed_grams(suggested_feed_amount, biomass_g)
+            st.write(
+                f"- Lower feed amount suggestion: about {suggested_feed_amount} on the model scale "
+                f"(≈ {reduced_grams}g per feed for this setup)."
+            )
+
+        if split_schedule is not None:
+            split_times, split_amount = split_schedule
+            st.write(
+                f"- Split-feed suggestion: try {split_times} "
+                f"({real_time_text(split_times, minutes_per_interval)}) with about {split_amount} per feed."
+            )
+
+        st.subheader("Confidence")
+        st.write(
+            "This is a practical estimate based on typical tank behaviour, not a direct sensor measurement. "
+            "Use it as a guide, then judge against what you actually see in the tank."
         )
-        ax.text(
-            recommended_t + 1,
-            peak_value * 0.55 if peak_value > 0 else 0.5,
-            f"{label('Recommended delay', 'Recommended gap', advanced_mode)} ≈ {format_duration(gap_minutes)}",
-            fontsize=10,
-        )
 
-risk_threshold = 6.0
-ax.axhspan(risk_threshold, max(peak_value + 1, risk_threshold + 1), alpha=0.08, color="red")
-ax.text(1, risk_threshold + 0.15, "High waste zone", fontsize=9)
-
-if feed_times and clear_steps > 0:
-    start = feed_times[0]
-    end = min(feed_times[0] + clear_steps, simulation_length - 1)
-    ax.axvspan(start, end, alpha=0.06, color="green")
-
-for ft in feed_times:
-    if 0 <= ft < len(values):
-        local_y = values[ft]
-        ax.annotate(
-            "Feed spike",
-            xy=(ft, local_y),
-            xytext=(ft + 2, local_y + 0.4),
-            arrowprops={"arrowstyle": "->"},
-            fontsize=9,
-        )
-
-ax.set_title(label("Waste Level Over Time", "Particle Concentration Over Time", advanced_mode))
-ax.set_xlabel(label("Timeline", "Time", advanced_mode))
-ax.set_ylabel(label("Waste Level", "Particle Concentration", advanced_mode))
-ax.grid(True, alpha=0.25)
-ax.legend()
-plt.tight_layout()
-
-st.pyplot(fig)
-
-
-# -----------------------------
-# Comparison / analytics
-# -----------------------------
-c1, c2, c3 = st.columns(3)
-c1.metric(load_label, f"{total_load:.2f}")
-c2.metric(baseline_label, f"{vs_baseline_load:+.2f}" if show_baseline else "Hidden")
-c3.metric("Feed Events", f"{len(feed_times)}")
-
-if show_baseline:
-    if vs_baseline_load > 2:
-        st.warning("Your current plan creates more total waste than the simple single-feed plan.")
-    elif vs_baseline_load < -2:
-        st.success("Your current plan creates less total waste than the simple single-feed plan.")
-    else:
-        st.info("Your current plan is broadly similar to the simple single-feed plan.")
-
-
-# -----------------------------
-# Setup summary
-# -----------------------------
-with st.expander("Current Setup Summary", expanded=False):
-    st.write(f"**Tank Type:** {tank_type}")
-    st.write(f"**Tank Size:** {tank_size_l}L")
-    st.write(f"**Filter Type:** {filter_type}")
-    st.write(f"**Filter Flow:** {flow_rate_lph} L/h")
-    st.write(f"**Turnover:** {turnover:.1f}x per hour")
-    st.write(f"**Stocking Level:** {stocking_level}")
-    st.write(f"**Feed Type:** {feed_type}")
-    st.write(f"**Time Scale:** {time_scale_label}")
-    st.write(f"**Goal:** {goal}")
-    if advanced_mode or use_custom_rates:
+with advanced_tab:
+    with st.expander("Current Setup Summary", expanded=True):
+        st.write(f"**Tank Type:** {tank_type}")
+        st.write(f"**Tank Size:** {tank_size_l}L")
+        st.write(f"**Tank Maturity:** {tank_maturity}")
+        st.write(f"**Substrate / Biofilm:** {substrate_type}")
+        st.write(f"**Filter Type:** {filter_type}")
+        st.write(f"**Filter Flow:** {flow_rate_lph} L/h")
+        st.write(f"**Turnover:** {turnover:.1f}x per hour")
+        st.write(f"**Stocking Level:** {stocking_level}")
+        st.write(f"**Estimated Biomass:** {biomass_g}g")
+        st.write(f"**Feed Type:** {feed_type}")
+        st.write(f"**Feed Level:** {practical_feed_label(feed_amount)}")
+        st.write(f"**Approx Feed / Event:** {approx_grams}g")
+        st.write(f"**Approx % Bodyweight / Event:** {approx_pct_bw:.1f}%")
+        st.write(f"**Time Scale:** {time_scale_label}")
+        st.write(f"**Goal:** {goal}")
+        st.write(f"**Feed Times:** {feed_times if feed_times else 'None'}")
+        if feed_times:
+            st.write(f"**Real-time equivalents:** {real_time_text(feed_times, minutes_per_interval)}")
+        st.write(f"**Feed Amount per Event:** {feed_amount:.2f}")
         st.write(f"**Model Rates:** kₛ = {k_s:.2f}, k_c = {k_c:.2f}, k_f = {k_f:.2f}")
-    st.write(f"**Feed Times:** {feed_times if feed_times else 'None'}")
-    if feed_times:
-        st.write(f"**Real-time equivalents:** {timeline_to_real_time_text(feed_times, minutes_per_interval)}")
-    st.write(f"**Feed Amount per Event:** {feed_amount:.2f}")
+
+    if advanced_mode:
+        with st.expander("Model Details", expanded=False):
+            st.write("This simulation uses a simple discrete decay model.")
+            st.latex(r"P(t+1)=P(t)-(k_s+k_c+k_f)P(t)+F(t)")
+            st.write("Where:")
+            st.write("- P(t): particle concentration at time t")
+            st.write("- kₛ: settling rate")
+            st.write("- k_c: consumption rate")
+            st.write("- k_f: filtration rate")
+            st.write("- F(t): feed input at time t")
 
 
 # -----------------------------
-# Verdict
+# Verdict banner
 # -----------------------------
 if verdict_level == "success":
     st.success(verdict_text)
@@ -1117,91 +1187,6 @@ elif verdict_level == "warning":
     st.warning(verdict_text)
 else:
     st.info(verdict_text)
-
-
-# -----------------------------
-# What's happening / What you should do
-# -----------------------------
-left, right = st.columns(2)
-
-with left:
-    st.subheader("What’s happening")
-    for note in notes:
-        st.write(f"- {note}")
-
-with right:
-    st.subheader("What you should do")
-    for action in actions:
-        st.write(f"- {action}")
-
-    if better_spacing:
-        st.write(
-            f"- Try feeding at these timeline points: {better_spacing} "
-            f"({timeline_to_real_time_text(better_spacing, minutes_per_interval)})"
-        )
-
-    if suggested_feed_amount < feed_amount:
-        st.write(f"- Lower feed amount suggestion: about {suggested_feed_amount} per feed.")
-
-    if split_schedule is not None:
-        split_times, split_amount = split_schedule
-        st.write(
-            f"- Split-feed suggestion: try {split_times} "
-            f"({timeline_to_real_time_text(split_times, minutes_per_interval)}) "
-            f"with about {split_amount} per feed."
-        )
-
-
-# -----------------------------
-# Scenario comparison cards
-# -----------------------------
-st.subheader("Scenario Compare Mode")
-
-normal_times = [10] if simulation_length > 10 else [0]
-double_times = [10, min(25, simulation_length - 1)] if simulation_length > 25 else [0, min(5, simulation_length - 1)]
-missed_times: List[int] = []
-
-normal_values = run_simulation(normal_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
-double_values = run_simulation(double_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
-missed_values = run_simulation(missed_times, simulation_length, feed_amount, k_s, k_c, k_f, feed_type)
-
-sc1, sc2, sc3 = st.columns(3)
-
-with sc1:
-    st.markdown("**Normal Feeding**")
-    st.write(f"Timeline points: {normal_times}")
-    st.write(f"Real time: {timeline_to_real_time_text(normal_times, minutes_per_interval)}")
-    st.write(f"{peak_label}: {max_value(normal_values):.2f}")
-    st.write(f"{load_label}: {area_under_curve(normal_values):.2f}")
-
-with sc2:
-    st.markdown("**Double Feeding**")
-    st.write(f"Timeline points: {double_times}")
-    st.write(f"Real time: {timeline_to_real_time_text(double_times, minutes_per_interval)}")
-    st.write(f"{peak_label}: {max_value(double_values):.2f}")
-    st.write(f"{load_label}: {area_under_curve(double_values):.2f}")
-
-with sc3:
-    st.markdown("**Missed Feeding**")
-    st.write("Timeline points: None")
-    st.write("Real time: None")
-    st.write(f"{peak_label}: {max_value(missed_values):.2f}")
-    st.write(f"{load_label}: {area_under_curve(missed_values):.2f}")
-
-
-# -----------------------------
-# Advanced model details
-# -----------------------------
-if advanced_mode:
-    with st.expander("Model Details", expanded=False):
-        st.write("This simulation uses a simple discrete decay model.")
-        st.latex(r"P(t+1)=P(t)-(k_s+k_c+k_f)P(t)+F(t)")
-        st.write("Where:")
-        st.write("- P(t): particle concentration at time t")
-        st.write("- kₛ: settling rate")
-        st.write("- k_c: consumption rate")
-        st.write("- k_f: filtration rate")
-        st.write("- F(t): feed input at time t")
 
 
 # -----------------------------
