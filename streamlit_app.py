@@ -125,7 +125,7 @@ st.markdown(
     }
     .summary-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 0.75rem;
         margin: 0.5rem 0 1.25rem;
     }
@@ -172,6 +172,17 @@ st.markdown(
         line-height: 1.2;
         overflow-wrap: anywhere;
     }
+    .note-box {
+        border: 1px solid rgba(14, 165, 233, 0.22);
+        border-radius: 8px;
+        background: rgba(14, 165, 233, 0.06);
+        padding: 0.85rem 1rem;
+        margin: 0.65rem 0 1rem;
+        color: #cbd5e1;
+    }
+    .note-box strong {
+        color: #e2e8f0;
+    }
     @media (max-width: 760px) {
         .summary-grid, .detail-grid {
             grid-template-columns: 1fr;
@@ -203,8 +214,30 @@ FEED_TYPE_INFO = {
     "Slow-release / wafers":         {"spike": 0.70, "linger": 0.65, "description": "Releases waste gradually — lower spike, longer duration.",        "visual": "roughly one wafer or small piece",           "grams_per_pellet": None},
 }
 
+LIVESTOCK_INFO = {
+    "Shrimp colony": {"avg_weight": 0.35, "description": "Best for neocaridina/caridina colonies where biofilm and grazing matter."},
+    "Small community fish": {"avg_weight": 1.5, "description": "Tetras, rasboras, endlers, small guppies, and similar fish."},
+    "Betta / single feature fish": {"avg_weight": 4.0, "description": "Single betta or similar centerpiece fish with light cleanup crew."},
+    "Medium fish": {"avg_weight": 6.0, "description": "Gourami, larger livebearers, juvenile cichlids, and similar stock."},
+    "Large waste fish": {"avg_weight": 18.0, "description": "Goldfish, large cichlids, plecos, and other heavier-waste fish."},
+    "Mixed livestock": {"avg_weight": 3.0, "description": "Use when the tank contains a mix of fish, shrimp, and cleanup crew."},
+}
+
+LIFE_STAGE_INFO = {
+    "Adult / maintenance": {"feed_mult": 1.0, "description": "Maintenance feeding with a conservative waste margin."},
+    "Juvenile / growth": {"feed_mult": 1.25, "description": "Higher growth demand, but water quality margin is tighter."},
+    "Breeding / conditioning": {"feed_mult": 1.15, "description": "Slightly higher feeding pressure for conditioning or breeding."},
+    "Fry / very young": {"feed_mult": 1.4, "description": "Frequent small feeds. Treat recommendations as rough and observe closely."},
+}
+
+FILTER_CONDITION_INFO = {
+    "Clean / recently serviced": {"flow_mult": 1.0, "description": "Flow is likely close to normal."},
+    "Normal": {"flow_mult": 0.82, "description": "Typical real-world reduction from media and normal use."},
+    "Needs maintenance": {"flow_mult": 0.62, "description": "Reduced flow and less margin after feeding."},
+}
+
 STOCKING_INFO   = {"Light": "Few animals for the tank size — lower waste production.", "Moderate": "Typical home stocking — balanced waste.", "Heavy": "High population — higher waste, less margin for error."}
-PLANT_INFO      = {"None": "No plants — no additional nutrient uptake.", "Low": "A few stems or low-coverage plants.", "Moderate": "Reasonably planted — some nutrient uptake and biofilm.", "High": "Heavily planted — significant biological buffering."}
+PLANT_INFO      = {"None": "No plants — no additional nutrient uptake.", "Low": "A few stems or low-coverage plants.", "Moderate": "Reasonably planted — some nutrient uptake and biofilm.", "High": "Heavily planted — better long-term stability, but not instant leftover-food removal."}
 MATURITY_INFO   = {
     "New (<1 month)":          {"multiplier": 0.88, "description": "Less stable and less forgiving of waste spikes."},
     "Established (1–6 months)":{"multiplier": 1.00, "description": "More stable and predictable."},
@@ -336,21 +369,76 @@ def practical_feed_label(feed_amount: float) -> str:
     if feed_amount < 9.0: return "Heavy"
     return "Very heavy"
 
-def estimate_biomass_g(tank_type: str, tank_size_l: int, stocking_level: str, animal_count: int) -> float:
+def estimate_biomass_g(
+    tank_type: str, tank_size_l: int, stocking_level: str, animal_count: int,
+    livestock_profile: str, life_stage: str,
+) -> float:
+    stage_mult = float(LIFE_STAGE_INFO[life_stage]["feed_mult"])
     if animal_count > 0:
-        avg_weights = {"Shrimp Tank": 0.5, "Fish Tank": 5.0, "Mixed Tank": 2.0, "Custom": 3.0}
-        return round(max(animal_count * avg_weights.get(tank_type, 3.0), 5.0), 1)
+        avg_weight = float(LIVESTOCK_INFO[livestock_profile]["avg_weight"])
+        return round(max(animal_count * avg_weight * stage_mult, 2.0), 1)
     density = {
         "Shrimp Tank": {"Light": 0.18, "Moderate": 0.35, "Heavy": 0.60},
         "Fish Tank":   {"Light": 0.50, "Moderate": 1.10, "Heavy": 2.00},
     }.get(tank_type, {"Light": 0.30, "Moderate": 0.70, "Heavy": 1.20})
-    return round(max(tank_size_l * density[stocking_level], 5.0), 1)
+    profile_mult = clamp(float(LIVESTOCK_INFO[livestock_profile]["avg_weight"]) / 5.0, 0.35, 2.2)
+    return round(max(tank_size_l * density[stocking_level] * profile_mult * stage_mult, 2.0), 1)
 
 def feed_amount_to_pct_bw(feed_amount: float) -> float:
     return round(feed_amount * 0.6, 2)
 
 def estimated_feed_grams(feed_amount: float, biomass_g: float) -> float:
     return round(biomass_g * (feed_amount_to_pct_bw(feed_amount) / 100), 3)
+
+def confidence_rating(
+    animal_count: int, livestock_profile: str, tank_type: str,
+    filter_condition: str, use_custom: bool, schedule_mode: str,
+) -> Tuple[str, str]:
+    score = 72
+    if animal_count <= 0:
+        score -= 18
+    if livestock_profile in ["Mixed livestock", "Large waste fish"]:
+        score -= 8
+    if tank_type in ["Mixed Tank", "Custom"]:
+        score -= 8
+    if filter_condition == "Needs maintenance":
+        score -= 10
+    if use_custom:
+        score -= 5
+    if schedule_mode == "Timeline":
+        score += 4
+    score = int(clamp(score, 20, 90))
+    if score >= 75:
+        return "High", f"{score}/100"
+    if score >= 55:
+        return "Medium", f"{score}/100"
+    return "Rough", f"{score}/100"
+
+def setup_risk_flags(
+    tank_type: str, tank_size_l: int, animal_count: int, livestock_profile: str,
+    filter_condition: str, plant_density: str, tank_maturity: str, feed_type: str,
+    water_change_pct: int, feeds_per_day: int,
+) -> List[str]:
+    flags = []
+    if animal_count <= 0:
+        flags.append("Animal count is estimated, so gram guidance is less certain.")
+    if tank_size_l <= 25:
+        flags.append("Small tanks have less buffer after feeding.")
+    if "New" in tank_maturity:
+        flags.append("New tanks are less stable; feed conservatively.")
+    if filter_condition == "Needs maintenance":
+        flags.append("Filter maintenance is overdue; recovery may be slower than forecast.")
+    if livestock_profile == "Large waste fish":
+        flags.append("Large waste-producing fish need a wider safety margin.")
+    if plant_density == "High":
+        flags.append("Plants improve stability, but they do not instantly remove uneaten food.")
+    if feed_type in ["Powder / shrimp food", "Flakes"]:
+        flags.append("Fine foods disperse quickly; reduce portions if leftovers or clouding appear.")
+    if water_change_pct == 0:
+        flags.append("No water change is included in the forecast.")
+    if feeds_per_day >= 3:
+        flags.append("Frequent feeding should be split into smaller portions and checked with observation.")
+    return flags
 
 def pellet_equivalent_text(feed_type: str, grams: float) -> str:
     info = FEED_TYPE_INFO[feed_type]
@@ -770,6 +858,11 @@ with st.sidebar:
     tank_size_l    = st.slider("Tank size (litres)", 10, 500, pval("tank_size_l", wiz_size), 1)
     animal_count   = st.number_input("Animal count (0 = estimate)", min_value=0, max_value=2000,
                                      value=pval("animal_count", wiz_count), step=1)
+    default_livestock = "Shrimp colony" if pval("tank_type", wiz_tank) == "Shrimp Tank" else "Small community fish"
+    livestock_profile = st.selectbox("Livestock profile", list(LIVESTOCK_INFO.keys()),
+                                     index=list(LIVESTOCK_INFO.keys()).index(pval("livestock_profile", default_livestock)))
+    life_stage = st.selectbox("Feeding context", list(LIFE_STAGE_INFO.keys()),
+                              index=list(LIFE_STAGE_INFO.keys()).index(pval("life_stage", "Adult / maintenance")))
     stocking_level = st.selectbox("Stocking level", ["Light","Moderate","Heavy"],
                                   index=["Light","Moderate","Heavy"].index(pval("stocking_level","Moderate")))
     feed_type      = st.selectbox("Food type", list(FEED_TYPE_INFO.keys()),
@@ -782,13 +875,19 @@ with st.sidebar:
                                       index=list(PLANT_INFO.keys()).index(pval("plant_density", "Low")))
         filter_type    = st.selectbox("Filter type", list(FILTER_TYPE_INFO.keys()),
                                       index=list(FILTER_TYPE_INFO.keys()).index(pval("filter_type", "Internal filter")))
+        filter_condition = st.selectbox("Filter condition", list(FILTER_CONDITION_INFO.keys()),
+                                        index=list(FILTER_CONDITION_INFO.keys()).index(pval("filter_condition", "Normal")))
         flow_rate_lph  = st.slider("Filter flow rate (L/h)", 50, 3000, pval("flow_rate_lph", 300), 25)
         temperature    = st.slider("Water temperature (°C)", 16, 32, pval("temperature", 24), 1)
         st.caption(STOCKING_INFO[stocking_level])
+        st.caption(LIVESTOCK_INFO[livestock_profile]["description"])
+        st.caption(LIFE_STAGE_INFO[life_stage]["description"])
         st.caption(FILTER_TYPE_INFO[filter_type]["description"])
+        st.caption(FILTER_CONDITION_INFO[filter_condition]["description"])
         st.caption(FEED_TYPE_INFO[feed_type]["description"])
 
-    turnover            = safe_div(flow_rate_lph, tank_size_l)
+    effective_flow_lph  = int(flow_rate_lph * float(FILTER_CONDITION_INFO[filter_condition]["flow_mult"]))
+    turnover            = safe_div(effective_flow_lph, tank_size_l)
     filtration_strength = turnover_judgement(turnover, tank_type)
     st.caption(f"{tank_size_l}L {tank_type.lower()} · {stocking_level.lower()} stocking · {filtration_strength.lower()} filtration")
 
@@ -804,7 +903,7 @@ with st.sidebar:
 
     st.header("2. Feeding plan")
     feed_input_mode = st.radio("Feed amount input", ["Simple", "Advanced"], horizontal=True)
-    biomass_g       = estimate_biomass_g(tank_type, tank_size_l, stocking_level, int(animal_count))
+    biomass_g       = estimate_biomass_g(tank_type, tank_size_l, stocking_level, int(animal_count), livestock_profile, life_stage)
 
     if feed_input_mode == "Simple":
         feed_level  = st.select_slider("Feed size", options=list(SIMPLE_FEED_LEVELS.keys()), value="Normal")
@@ -860,7 +959,7 @@ with st.sidebar:
             k_f = st.slider("Filtration rate (k_f)", 0.00, 0.50, 0.20, 0.01)
         else:
             k_s, k_c, k_f, _ = map_setup_to_rates(
-                tank_type, stocking_level, tank_size_l, filter_type, flow_rate_lph,
+                tank_type, stocking_level, tank_size_l, filter_type, effective_flow_lph,
                 feed_type, tank_maturity, substrate_type, temperature, plant_density
             )
 
@@ -917,6 +1016,13 @@ vs_baseline   = total_load - baseline_load
 summary_text  = generate_summary(overlap, peak_value, bool(gap_ok), goal)
 visible_eff   = visible_tank_effects(tank_type, peak_value, overlap)
 reality_chks  = reality_check_list(tank_type)
+confidence_label, confidence_score_text = confidence_rating(
+    int(animal_count), livestock_profile, tank_type, filter_condition, use_custom, schedule_mode
+)
+setup_flags = setup_risk_flags(
+    tank_type, tank_size_l, int(animal_count), livestock_profile, filter_condition,
+    plant_density, tank_maturity, feed_type, water_change_pct, len(feed_times)
+)
 plus20_g      = round(approx_grams * 1.2, 3)
 minus20_g     = round(max(0.02, approx_grams * 0.8), 3)
 plus20_vals   = run_simulation(feed_times, simulation_length, plus20_g, k_s, k_c, k_f, feed_type,
@@ -930,9 +1036,10 @@ if "_pending_save_name" in st.session_state:
     pname = st.session_state.pop("_pending_save_name")
     st.session_state.profiles[pname] = {
         "tank_type": tank_type, "tank_size_l": tank_size_l, "animal_count": int(animal_count),
+        "livestock_profile": livestock_profile, "life_stage": life_stage,
         "tank_maturity": tank_maturity, "substrate_type": substrate_type, "plant_density": plant_density,
         "filter_type": filter_type, "flow_rate_lph": flow_rate_lph, "stocking_level": stocking_level,
-        "feed_type": feed_type, "temperature": temperature, "water_change_pct": water_change_pct,
+        "filter_condition": filter_condition, "feed_type": feed_type, "temperature": temperature, "water_change_pct": water_change_pct,
         "water_change_days": water_change_days,
     }
 
@@ -943,7 +1050,11 @@ if "_pending_save_name" in st.session_state:
 st.markdown('<p class="product-eyebrow">AquaFeed Optimiser</p>', unsafe_allow_html=True)
 st.markdown('<h1 class="product-title">Feeding recommendation</h1>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="product-subtitle">A practical estimate of feed amount, recovery time, and water-quality risk for the current setup.</p>',
+    '<p class="product-subtitle">A practical estimate of feed amount, recovery time, and relative feeding-load risk for the current setup.</p>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="note-box"><strong>Simulation note:</strong> this is a relative feeding-load forecast. It is not a sensor reading and does not predict exact ammonia, nitrite, nitrate, or particle concentration.</div>',
     unsafe_allow_html=True,
 )
 
@@ -987,6 +1098,10 @@ st.markdown(
             <div class="summary-label">Recovery</div>
             <div class="summary-value">{format_duration(recovery_mins)}</div>
         </div>
+        <div class="summary-card">
+            <div class="summary-label">Confidence</div>
+            <div class="summary-value">{confidence_label}</div>
+        </div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1020,6 +1135,11 @@ with tab_overview:
             f'<div class="status-card good"><div class="status-label">Recommended plan</div><p class="status-text">Feed about {approx_grams:.3f}g, keep spacing at {format_duration(gap_mins)} or more, and maintain the current plan.</p></div>',
             unsafe_allow_html=True,
         )
+    if setup_flags:
+        with st.expander("Before relying on this result", expanded=False):
+            for flag in setup_flags:
+                st.write(f"- {flag}")
+            st.caption(f"Confidence: {confidence_label} ({confidence_score_text}). Use tank observation and water tests to confirm.")
 
     st.divider()
 
@@ -1094,12 +1214,13 @@ with tab_overview:
 # ─── TAB 2: GRAPH ───
 with tab_graph:
     st.subheader("Feeding load over time")
-    st.caption("The shaded bands show when the plan is low risk, borderline, or likely to leave excess waste.")
+    st.caption("The shaded bands show relative load risk. Use the shape and recovery time, not the curve as an exact water-chemistry reading.")
 
-    time_labels = [
-        (f"{int(i*minutes_per_interval//60):02d}:{int(i*minutes_per_interval%60):02d}" if i % max(1, 60//minutes_per_interval) == 0 else "")
-        for i in range(simulation_length)
-    ]
+    tick_step = max(1, int(round(simulation_length / 8)))
+    tick_vals = list(range(0, simulation_length, tick_step))
+    if simulation_length - 1 not in tick_vals:
+        tick_vals.append(simulation_length - 1)
+    tick_text = [format_duration(v * minutes_per_interval) for v in tick_vals]
 
     max_y = max(8.0, round(peak_value * 1.25, 1))
     fig   = go.Figure()
@@ -1153,8 +1274,7 @@ with tab_graph:
         hovermode="x unified", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(size=12),
         xaxis=dict(showgrid=False, title="Time",
-                   tickmode="array", tickvals=[i for i in range(simulation_length) if time_labels[i]],
-                   ticktext=[time_labels[i] for i in range(simulation_length) if time_labels[i]]),
+                   tickmode="array", tickvals=tick_vals, ticktext=tick_text, tickangle=0),
         yaxis=dict(showgrid=True, gridcolor="rgba(0,0,0,0.05)", title="Feeding load", range=[0, max_y]),
         legend=dict(orientation="h", y=-0.15, x=0),
     )
@@ -1202,7 +1322,8 @@ with tab_meaning:
         if water_change_pct > 0:
             notes.append(f"A {water_change_pct}% water change every {water_change_days} day(s) is included in the simulation.")
         if plant_density in ["Moderate","High"]:
-            notes.append(f"{plant_density} plant density is adding extra nutrient uptake and biofilm — this helps the tank recover faster.")
+            notes.append(f"{plant_density} plant density improves long-term stability and biofilm, but uneaten food still needs to be controlled.")
+        notes.append(f"Forecast confidence is **{confidence_label.lower()}** ({confidence_score_text}) based on the inputs provided.")
         for n in notes:
             st.markdown(f"- {n}")
 
