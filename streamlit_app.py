@@ -3,8 +3,15 @@ from __future__ import annotations
 from datetime import time, datetime
 from typing import Dict, List, Tuple, Optional
 
-import plotly.graph_objects as go
+try:
+    import plotly.graph_objects as go
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
 import streamlit as st
+if not HAS_PLOTLY:
+    st.error("Plotly is not installed. Add `plotly` to your requirements.txt and redeploy.")
+    st.stop()
 
 st.set_page_config(page_title="AquaFeed Optimiser", page_icon="🐟", layout="wide")
 
