@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import time, datetime
+from html import escape
 from typing import Dict, List, Tuple, Optional
 
 try:
@@ -22,7 +23,7 @@ st.markdown(
         visibility: hidden;
     }
     .block-container {
-        padding-top: 2rem;
+        padding-top: 3rem;
         max-width: 1180px;
     }
     section[data-testid="stSidebar"] {
@@ -47,6 +48,15 @@ st.markdown(
     div[data-testid="stMetricLabel"] {
         color: #94a3b8;
     }
+    div[data-testid="stMetricValue"] {
+        font-size: clamp(1.35rem, 2vw, 2rem);
+        line-height: 1.15;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+    div[data-testid="stMetricDelta"] {
+        line-height: 1.25;
+    }
     button[kind="primary"], button[data-testid="stBaseButton-primary"] {
         background: #0ea5e9;
         border-color: #0ea5e9;
@@ -66,11 +76,15 @@ st.markdown(
     }
     .product-eyebrow {
         color: #94a3b8;
+        display: block;
         font-size: 0.82rem;
         font-weight: 700;
         letter-spacing: 0.08em;
-        line-height: 1.45;
-        margin: 0.25rem 0 0.15rem;
+        line-height: 1.7;
+        margin: 0 0 0.3rem;
+        min-height: 1.5rem;
+        overflow: visible;
+        padding-top: 0.35rem;
         text-transform: uppercase;
     }
     .product-title {
@@ -129,11 +143,37 @@ st.markdown(
         text-transform: uppercase;
     }
     .summary-value {
-        font-size: 1.35rem;
+        font-size: clamp(1.15rem, 1.8vw, 1.35rem);
         font-weight: 740;
+        line-height: 1.2;
+        overflow-wrap: anywhere;
+    }
+    .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin: 0.5rem 0 0.75rem;
+    }
+    .detail-card {
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 8px;
+        padding: 0.9rem 1rem;
+        background: rgba(148, 163, 184, 0.06);
+        min-height: 6.4rem;
+    }
+    .detail-label {
+        color: #cbd5e1;
+        font-size: 0.86rem;
+        margin-bottom: 0.45rem;
+    }
+    .detail-value {
+        font-size: clamp(1.05rem, 1.9vw, 1.55rem);
+        font-weight: 650;
+        line-height: 1.2;
+        overflow-wrap: anywhere;
     }
     @media (max-width: 760px) {
-        .summary-grid {
+        .summary-grid, .detail-grid {
             grid-template-columns: 1fr;
         }
     }
@@ -611,7 +651,7 @@ def show_onboarding():
 
     elif step == 2:
         st.markdown("### How big is the tank?")
-        size = st.select_slider("Tank size", options=[10,15,20,30,40,50,60,80,100,120,150,200,300], value=60)
+        size = st.slider("Tank size (litres)", 10, 500, 60, 1)
         hint = ("Very small — be conservative with feeding." if size <= 20 else
                 "Small — less margin for error." if size <= 50 else
                 "Medium — reasonable margin." if size <= 100 else
@@ -729,7 +769,7 @@ with st.sidebar:
 
     tank_type = st.selectbox("Tank type", ["Shrimp Tank", "Fish Tank", "Mixed Tank", "Custom"],
                              index=["Shrimp Tank","Fish Tank","Mixed Tank","Custom"].index(pval("tank_type", wiz_tank)))
-    tank_size_l    = st.slider("Tank size (litres)", 10, 500, pval("tank_size_l", wiz_size), 5)
+    tank_size_l    = st.slider("Tank size (litres)", 10, 500, pval("tank_size_l", wiz_size), 1)
     animal_count   = st.number_input("Approximate animal count (0 = estimate)", min_value=0, max_value=2000,
                                      value=pval("animal_count", wiz_count), step=1)
     tank_maturity  = st.selectbox("Tank maturity", list(MATURITY_INFO.keys()), index=1)
@@ -1016,11 +1056,30 @@ with tab_overview:
 
     # ── Practical feed guide ──
     st.subheader("Practical feed guide")
-    p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Feed level",         str(feed_level).title())
-    p2.metric("Amount per feed",    f"{approx_grams:.3f} g")
-    p3.metric("% body weight",      f"{approx_pct_bw:.1f}%")
-    p4.metric("Visual equivalent",  pellet_equivalent_text(feed_type, approx_grams))
+    visual_equivalent = pellet_equivalent_text(feed_type, approx_grams)
+    st.markdown(
+        f"""
+        <div class="detail-grid">
+            <div class="detail-card">
+                <div class="detail-label">Feed level</div>
+                <div class="detail-value">{escape(str(feed_level).title())}</div>
+            </div>
+            <div class="detail-card">
+                <div class="detail-label">Amount per feed</div>
+                <div class="detail-value">{approx_grams:.3f} g</div>
+            </div>
+            <div class="detail-card">
+                <div class="detail-label">% body weight</div>
+                <div class="detail-value">{approx_pct_bw:.1f}%</div>
+            </div>
+            <div class="detail-card">
+                <div class="detail-label">Visual equivalent</div>
+                <div class="detail-value">{escape(visual_equivalent)}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.caption("Estimates based on tank type, stocking level, and estimated livestock biomass. Use as practical guidance, not exact dosing.")
 
     st.divider()
