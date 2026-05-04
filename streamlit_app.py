@@ -125,7 +125,7 @@ st.markdown(
     }
     .summary-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
         gap: 0.75rem;
         margin: 0.5rem 0 1.25rem;
     }
@@ -413,6 +413,37 @@ def confidence_rating(
     if score >= 55:
         return "Medium", f"{score}/100"
     return "Rough", f"{score}/100"
+
+def confidence_guidance(
+    animal_count: int, livestock_profile: str, tank_type: str,
+    filter_condition: str, use_custom: bool, schedule_mode: str,
+) -> Tuple[List[str], List[str]]:
+    reasons = []
+    actions = []
+    if animal_count <= 0:
+        reasons.append("Animal count is estimated rather than entered.")
+        actions.append("Enter an approximate animal count.")
+    if livestock_profile in ["Mixed livestock", "Large waste fish"]:
+        reasons.append(f"{livestock_profile.lower()} varies a lot between real tanks.")
+        actions.append("Use a more specific livestock profile if one fits.")
+    if tank_type in ["Mixed Tank", "Custom"]:
+        reasons.append("Mixed/custom tanks are harder to model from broad inputs.")
+        actions.append("Use Full mode to fine tune plants, filter, and stocking.")
+    if filter_condition == "Needs maintenance":
+        reasons.append("Filter condition suggests reduced real-world flow.")
+        actions.append("Service the filter or set a more accurate filter condition.")
+    if use_custom:
+        reasons.append("Manual model-rate overrides are being used.")
+        actions.append("Use the automatic model unless you have measured rates.")
+    if schedule_mode == "Timeline":
+        reasons.append("Timeline scheduling gives more exact feed spacing.")
+    else:
+        actions.append("Use Full mode with timeline scheduling for exact spacing tests.")
+    if not reasons:
+        reasons.append("Core tank, livestock, filter, and feeding inputs are specific enough for a practical forecast.")
+    if not actions:
+        actions.append("Log real feeding outcomes to check whether the forecast matches the tank.")
+    return reasons, actions
 
 def setup_risk_flags(
     tank_type: str, tank_size_l: int, animal_count: int, livestock_profile: str,
@@ -1059,10 +1090,14 @@ reality_chks  = reality_check_list(tank_type)
 confidence_label, confidence_score_text = confidence_rating(
     int(animal_count), livestock_profile, tank_type, filter_condition, use_custom, schedule_mode
 )
+confidence_reasons, confidence_actions = confidence_guidance(
+    int(animal_count), livestock_profile, tank_type, filter_condition, use_custom, schedule_mode
+)
 setup_flags = setup_risk_flags(
     tank_type, tank_size_l, int(animal_count), livestock_profile, filter_condition,
     plant_density, tank_maturity, feed_type, water_change_pct, len(feed_times)
 )
+visual_equivalent = pellet_equivalent_text(feed_type, approx_grams)
 plus20_g      = round(approx_grams * 1.2, 3)
 minus20_g     = round(max(0.02, approx_grams * 0.8), 3)
 plus20_vals   = run_simulation(feed_times, simulation_length, plus20_g, k_s, k_c, k_f, feed_type,
@@ -1070,6 +1105,7 @@ plus20_vals   = run_simulation(feed_times, simulation_length, plus20_g, k_s, k_c
 minus20_vals  = run_simulation(feed_times, simulation_length, minus20_g, k_s, k_c, k_f, feed_type,
                                use_saturation=use_saturation, water_change_steps=wc_steps, water_change_pct=water_change_pct)
 suggested_g   = suggest_reduced_feed(approx_grams, peak_value)
+suggested_visual = pellet_equivalent_text(feed_type, suggested_g)
 
 # Save profile if pending
 if "_pending_save_name" in st.session_state:
@@ -1127,7 +1163,11 @@ st.markdown(
     f"""
     <div class="summary-grid">
         <div class="summary-card">
-            <div class="summary-label">Feed amount</div>
+            <div class="summary-label">Feed this</div>
+            <div class="summary-value">{escape(visual_equivalent)}</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Gram estimate</div>
             <div class="summary-value">{approx_grams:.3f} g</div>
         </div>
         <div class="summary-card">
@@ -1162,24 +1202,33 @@ with tab_overview:
         st.info("Set up a feeding schedule in the sidebar.")
     elif overlap or peak_value > 6:
         st.markdown(
-            f'<div class="status-card risk"><div class="status-label">Recommended adjustment</div><p class="status-text">Reduce feed to about {suggested_g:.3f}g and increase spacing to at least {format_duration(gap_mins)} between feeds.</p></div>',
+            f'<div class="status-card risk"><div class="status-label">Recommended adjustment</div><p class="status-text">Reduce to {escape(suggested_visual)} (~{suggested_g:.3f}g) and increase spacing to at least {format_duration(gap_mins)} between feeds.</p></div>',
             unsafe_allow_html=True,
         )
     elif peak_value > 4:
         st.markdown(
-            f'<div class="status-card warn"><div class="status-label">Recommended adjustment</div><p class="status-text">Consider reducing to about {suggested_g:.3f}g per feed and waiting at least {format_duration(gap_mins)} between feeds.</p></div>',
+            f'<div class="status-card warn"><div class="status-label">Recommended adjustment</div><p class="status-text">Consider reducing to {escape(suggested_visual)} (~{suggested_g:.3f}g) per feed and waiting at least {format_duration(gap_mins)} between feeds.</p></div>',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            f'<div class="status-card good"><div class="status-label">Recommended plan</div><p class="status-text">Feed about {approx_grams:.3f}g, keep spacing at {format_duration(gap_mins)} or more, and maintain the current plan.</p></div>',
+            f'<div class="status-card good"><div class="status-label">Recommended plan</div><p class="status-text">Feed {escape(visual_equivalent)} (~{approx_grams:.3f}g), keep spacing at {format_duration(gap_mins)} or more, and maintain the current plan.</p></div>',
             unsafe_allow_html=True,
         )
-    if setup_flags:
-        with st.expander("Before relying on this result", expanded=False):
+    if setup_flags or confidence_reasons:
+        with st.expander("Before relying on this result", expanded=(confidence_label == "Rough")):
+            st.markdown(f"**Confidence: {confidence_label} ({confidence_score_text})**")
+            st.markdown("**Why**")
+            for reason in confidence_reasons:
+                st.write(f"- {reason}")
+            st.markdown("**Improve it**")
+            for action in confidence_actions:
+                st.write(f"- {action}")
+            if setup_flags:
+                st.markdown("**Caution flags**")
             for flag in setup_flags:
                 st.write(f"- {flag}")
-            st.caption(f"Confidence: {confidence_label} ({confidence_score_text}). Use tank observation and water tests to confirm.")
+            st.caption("Use tank observation and water tests to confirm the forecast.")
 
     st.divider()
 
@@ -1201,7 +1250,6 @@ with tab_overview:
 
     # ── Practical feed guide ──
     st.subheader("Practical feed guide")
-    visual_equivalent = pellet_equivalent_text(feed_type, approx_grams)
     st.markdown(
         f"""
         <div class="detail-grid">
