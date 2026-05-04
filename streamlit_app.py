@@ -13,7 +13,134 @@ if not HAS_PLOTLY:
     st.error("Plotly is not installed. Add `plotly` to your requirements.txt and redeploy.")
     st.stop()
 
-st.set_page_config(page_title="AquaFeed Optimiser", page_icon="🐟", layout="wide")
+st.set_page_config(page_title="AquaFeed Optimiser", page_icon="A", layout="wide")
+
+st.markdown(
+    """
+    <style>
+    #MainMenu, header [data-testid="stToolbar"], header [data-testid="stDecoration"] {
+        visibility: hidden;
+    }
+    .block-container {
+        padding-top: 2rem;
+        max-width: 1180px;
+    }
+    section[data-testid="stSidebar"] {
+        border-right: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    section[data-testid="stSidebar"] h2 {
+        font-size: 0.95rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #94a3b8;
+        margin-top: 1.2rem;
+    }
+    h1, h2, h3 {
+        letter-spacing: 0;
+    }
+    div[data-testid="stMetric"] {
+        background: rgba(148, 163, 184, 0.07);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 8px;
+        padding: 0.85rem 0.95rem;
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #94a3b8;
+    }
+    button[kind="primary"], button[data-testid="stBaseButton-primary"] {
+        background: #0ea5e9;
+        border-color: #0ea5e9;
+        color: #ffffff;
+    }
+    button[kind="primary"]:hover, button[data-testid="stBaseButton-primary"]:hover {
+        background: #0284c7;
+        border-color: #0284c7;
+        color: #ffffff;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #38bdf8 !important;
+        border-bottom: 2px solid #38bdf8 !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] p {
+        color: #38bdf8 !important;
+    }
+    .product-eyebrow {
+        color: #94a3b8;
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        line-height: 1.45;
+        margin: 0.25rem 0 0.15rem;
+        text-transform: uppercase;
+    }
+    .product-title {
+        font-size: clamp(2.1rem, 4vw, 3.2rem);
+        font-weight: 760;
+        margin: 0 0 0.2rem;
+        line-height: 1.05;
+    }
+    .product-subtitle {
+        color: #94a3b8;
+        font-size: 1.02rem;
+        margin: 0 0 1.25rem;
+        max-width: 760px;
+    }
+    .status-card {
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-left-width: 5px;
+        border-radius: 8px;
+        padding: 1rem 1.1rem;
+        margin: 0.75rem 0 1.1rem;
+        background: rgba(15, 23, 42, 0.28);
+    }
+    .status-card.good { border-left-color: #22c55e; }
+    .status-card.warn { border-left-color: #f59e0b; }
+    .status-card.risk { border-left-color: #ef4444; }
+    .status-label {
+        color: #94a3b8;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        margin-bottom: 0.25rem;
+        text-transform: uppercase;
+    }
+    .status-text {
+        font-size: 1.08rem;
+        font-weight: 650;
+        margin: 0;
+    }
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin: 0.5rem 0 1.25rem;
+    }
+    .summary-card {
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 8px;
+        padding: 0.9rem 1rem;
+        background: rgba(148, 163, 184, 0.06);
+    }
+    .summary-label {
+        color: #94a3b8;
+        font-size: 0.78rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+        text-transform: uppercase;
+    }
+    .summary-value {
+        font-size: 1.35rem;
+        font-weight: 740;
+    }
+    @media (max-width: 760px) {
+        .summary-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ─────────────────────────────────────────────
 # CONSTANTS
@@ -394,7 +521,7 @@ def suggest_reduced_feed(grams: float, peak: float, target: float = 5.0) -> floa
 def optimise_feed_plan(
     feed_times: List[int], feed_grams: float, sim_len: int,
     k_s: float, k_c: float, k_f: float, feed_type: str, goal: str,
-    water_change_steps: List[int], water_change_pct: float,
+    water_change_steps: List[int], water_change_pct: float, minutes_per_interval: int,
 ) -> Tuple[List[int], float, List[str]]:
     if not feed_times: return [], feed_grams, []
     orig_times  = list(feed_times)
@@ -412,7 +539,7 @@ def optimise_feed_plan(
 
     if better_times and better_times != orig_times:
         gn = recommended_gap(vals) or 0
-        changes.append(f"Adjusted feed spacing to a minimum gap of {real_time_text([gn], 15)} between feeds.")
+        changes.append(f"Adjusted feed spacing to a minimum gap of {real_time_text([gn], minutes_per_interval)} between feeds.")
     if abs(better_amount - orig_amount) > 0.001:
         changes.append(f"Reduced feed amount from {orig_amount:.3f}g to {better_amount:.3f}g to bring peak load into the safe zone.")
     if not changes:
@@ -456,8 +583,12 @@ def load_preset_into_session(preset_name: str):
 # ─────────────────────────────────────────────
 
 def show_onboarding():
-    st.markdown("## Welcome to AquaFeed Optimiser 🐟")
-    st.markdown("Answer 5 quick questions and we'll tell you exactly how to feed your tank.")
+    st.markdown('<p class="product-eyebrow">Aquarium feeding planner</p>', unsafe_allow_html=True)
+    st.markdown('<h1 class="product-title">AquaFeed Optimiser</h1>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="product-subtitle">Build a practical feeding recommendation from your tank size, livestock, food type, and schedule.</p>',
+        unsafe_allow_html=True,
+    )
 
     step  = st.session_state.wizard_step
     wiz   = st.session_state.wizard
@@ -470,7 +601,7 @@ def show_onboarding():
     if step == 1:
         st.markdown("### What kind of tank do you have?")
         cols = st.columns(3)
-        options = [("🦐 Shrimp tank", "Shrimp Tank"), ("🐠 Fish tank", "Fish Tank"), ("🌿 Mixed / planted", "Mixed Tank")]
+        options = [("Shrimp tank", "Shrimp Tank"), ("Fish tank", "Fish Tank"), ("Mixed or planted", "Mixed Tank")]
         for col, (label, val) in zip(cols, options):
             with col:
                 if st.button(label, use_container_width=True, key=f"wiz_tank_{val}"):
@@ -485,13 +616,13 @@ def show_onboarding():
                 "Small — less margin for error." if size <= 50 else
                 "Medium — reasonable margin." if size <= 100 else
                 "Large — more forgiving." if size <= 200 else "Very large — excellent buffering.")
-        st.caption(f"💧 {hint}")
+        st.caption(hint)
         wiz["tank_size_l"] = size
         col1, col2 = st.columns([1, 3])
         with col1:
-            if st.button("← Back"): st.session_state.wizard_step = 1; st.rerun()
+            if st.button("Back"): st.session_state.wizard_step = 1; st.rerun()
         with col2:
-            if st.button("Next →", type="primary", use_container_width=True):
+            if st.button("Next", type="primary", use_container_width=True):
                 st.session_state.wizard_step = 3; st.rerun()
 
     elif step == 3:
@@ -502,9 +633,9 @@ def show_onboarding():
         wiz["animal_count"] = count_map[count_label]
         col1, col2 = st.columns([1, 3])
         with col1:
-            if st.button("← Back"): st.session_state.wizard_step = 2; st.rerun()
+            if st.button("Back"): st.session_state.wizard_step = 2; st.rerun()
         with col2:
-            if st.button("Next →", type="primary", use_container_width=True):
+            if st.button("Next", type="primary", use_container_width=True):
                 st.session_state.wizard_step = 4; st.rerun()
 
     elif step == 4:
@@ -521,7 +652,7 @@ def show_onboarding():
                     st.rerun()
         col1, _ = st.columns([1, 3])
         with col1:
-            if st.button("← Back"): st.session_state.wizard_step = 3; st.rerun()
+            if st.button("Back"): st.session_state.wizard_step = 3; st.rerun()
 
     elif step == 5:
         st.markdown("### How often do you currently feed?")
@@ -529,14 +660,14 @@ def show_onboarding():
         wiz["feed_freq"] = freq_label
         col1, col2 = st.columns([1, 3])
         with col1:
-            if st.button("← Back"): st.session_state.wizard_step = 4; st.rerun()
+            if st.button("Back"): st.session_state.wizard_step = 4; st.rerun()
         with col2:
-            if st.button("See my results →", type="primary", use_container_width=True):
+            if st.button("See recommendation", type="primary", use_container_width=True):
                 st.session_state.onboarding_complete = True
                 st.rerun()
 
     st.divider()
-    if st.button("Skip setup — go straight to full tool"):
+    if st.button("Skip setup and open full planner"):
         st.session_state.onboarding_complete = True
         st.rerun()
 
@@ -565,7 +696,7 @@ wiz_feeds_count = {"Once a day": 1, "Twice a day": 2, "3+ times a day": 3, "Ever
 # ─────────────────────────────────────────────
 
 with st.sidebar:
-    st.header("AquaFeed Optimiser 🐟")
+    st.header("Planner controls")
 
     # ── Presets ──
     with st.expander("Load a preset tank", expanded=False):
@@ -651,7 +782,8 @@ with st.sidebar:
         feed_level  = st.select_slider("Feed size", options=list(SIMPLE_FEED_LEVELS.keys()), value="Normal")
         feed_amount = SIMPLE_FEED_LEVELS[feed_level]
     else:
-        feed_amount = st.slider("Feed amount (model units)", 0.5, 20.0, 5.0, 0.5)
+        feed_amount = st.slider("Feed intensity", 0.5, 20.0, 5.0, 0.5,
+                                help="Advanced control that scales the estimated grams per feed.")
         feed_level  = practical_feed_label(feed_amount)
 
     approx_pct_bw  = feed_amount_to_pct_bw(feed_amount)
@@ -707,8 +839,8 @@ with st.sidebar:
                 feed_type, tank_maturity, substrate_type, temperature, plant_density
             )
 
-    auto_optimise = st.button("✨ Optimise my feeding plan", type="primary")
-    if st.button("↩ Start over / change tank"):
+    auto_optimise = st.button("Optimise feeding plan", type="primary")
+    if st.button("Start over / change tank"):
         st.session_state.onboarding_complete = False
         st.session_state.wizard_step = 1
         st.session_state.wizard = {}
@@ -726,7 +858,7 @@ optimise_changes = []
 if auto_optimise:
     feed_times, approx_grams, optimise_changes = optimise_feed_plan(
         feed_times, approx_grams, simulation_length, k_s, k_c, k_f,
-        feed_type, goal, wc_steps, water_change_pct,
+        feed_type, goal, wc_steps, water_change_pct, minutes_per_interval,
     )
     st.session_state.last_optimise_changes = optimise_changes
 
@@ -783,23 +915,57 @@ if "_pending_save_name" in st.session_state:
 # HEADER
 # ─────────────────────────────────────────────
 
-st.title("AquaFeed Optimiser 🐟")
+st.markdown('<p class="product-eyebrow">AquaFeed Optimiser</p>', unsafe_allow_html=True)
+st.markdown('<h1 class="product-title">Feeding recommendation</h1>', unsafe_allow_html=True)
+st.markdown(
+    '<p class="product-subtitle">A practical estimate of feed amount, recovery time, and water-quality risk for the current setup.</p>',
+    unsafe_allow_html=True,
+)
 
 # ── Optimise changes notification ──
 if st.session_state.last_optimise_changes:
-    with st.expander("✨ Here's what the optimiser changed", expanded=True):
+    with st.expander("Optimiser changes", expanded=True):
         for c in st.session_state.last_optimise_changes:
-            st.write(f"— {c}")
+            st.write(f"- {c}")
 
 # ── ONE-LINE VERDICT ──
 if not feed_times:
     st.info("Add a feeding schedule in the sidebar to see your results.")
 elif overlap or peak_value > 6:
-    st.error(f"⚠️ {summary_text}")
+    st.markdown(
+        f'<div class="status-card risk"><div class="status-label">High attention</div><p class="status-text">{summary_text}</p></div>',
+        unsafe_allow_html=True,
+    )
 elif peak_value > 4 or not gap_ok:
-    st.warning(f"⚡ {summary_text}")
+    st.markdown(
+        f'<div class="status-card warn"><div class="status-label">Review recommended</div><p class="status-text">{summary_text}</p></div>',
+        unsafe_allow_html=True,
+    )
 else:
-    st.success(f"✅ {summary_text}")
+    st.markdown(
+        f'<div class="status-card good"><div class="status-label">Plan status</div><p class="status-text">{summary_text}</p></div>',
+        unsafe_allow_html=True,
+    )
+
+st.markdown(
+    f"""
+    <div class="summary-grid">
+        <div class="summary-card">
+            <div class="summary-label">Feed amount</div>
+            <div class="summary-value">{approx_grams:.3f} g</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Minimum gap</div>
+            <div class="summary-value">{format_duration(gap_mins)}</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-label">Recovery</div>
+            <div class="summary-value">{format_duration(recovery_mins)}</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ─────────────────────────────────────────────
 # TABS
@@ -815,11 +981,20 @@ with tab_overview:
     if not feed_times:
         st.info("Set up a feeding schedule in the sidebar.")
     elif overlap or peak_value > 6:
-        st.error(f"Reduce feed to about **{suggested_g:.3f}g** and increase spacing to at least **{format_duration(gap_mins)}** between feeds.")
+        st.markdown(
+            f'<div class="status-card risk"><div class="status-label">Recommended adjustment</div><p class="status-text">Reduce feed to about {suggested_g:.3f}g and increase spacing to at least {format_duration(gap_mins)} between feeds.</p></div>',
+            unsafe_allow_html=True,
+        )
     elif peak_value > 4:
-        st.warning(f"Consider reducing to about **{suggested_g:.3f}g** per feed and waiting at least **{format_duration(gap_mins)}** between feeds.")
+        st.markdown(
+            f'<div class="status-card warn"><div class="status-label">Recommended adjustment</div><p class="status-text">Consider reducing to about {suggested_g:.3f}g per feed and waiting at least {format_duration(gap_mins)} between feeds.</p></div>',
+            unsafe_allow_html=True,
+        )
     else:
-        st.success(f"Feed about **{approx_grams:.3f}g**, keep spacing at **{format_duration(gap_mins)} or more**, and maintain the current plan.")
+        st.markdown(
+            f'<div class="status-card good"><div class="status-label">Recommended plan</div><p class="status-text">Feed about {approx_grams:.3f}g, keep spacing at {format_duration(gap_mins)} or more, and maintain the current plan.</p></div>',
+            unsafe_allow_html=True,
+        )
 
     st.divider()
 
@@ -863,7 +1038,7 @@ with tab_overview:
     st.divider()
 
     # ── Copy summary ──
-    with st.expander("📋 Copy results summary"):
+    with st.expander("Copy results summary"):
         summary_txt = build_summary_text(
             tank_type, tank_size_l, stocking_level, filter_type, flow_rate_lph,
             feed_type, approx_grams, feed_level, turnover, summary_text,
@@ -874,6 +1049,9 @@ with tab_overview:
 
 # ─── TAB 2: GRAPH ───
 with tab_graph:
+    st.subheader("Feeding load over time")
+    st.caption("The shaded bands show when the plan is low risk, borderline, or likely to leave excess waste.")
+
     time_labels = [
         (f"{int(i*minutes_per_interval//60):02d}:{int(i*minutes_per_interval%60):02d}" if i % max(1, 60//minutes_per_interval) == 0 else "")
         for i in range(simulation_length)
@@ -926,9 +1104,11 @@ with tab_graph:
                           annotation_text=f"Min next feed ({format_duration(gap_mins)})", annotation_font_size=10)
 
     fig.update_layout(
-        title=None, margin=dict(l=0, r=0, t=20, b=40),
+        title=dict(text="Feeding load forecast", x=0, xanchor="left", font=dict(size=17)),
+        margin=dict(l=0, r=0, t=44, b=40),
         hovermode="x unified", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False, title="Time interval",
+        font=dict(size=12),
+        xaxis=dict(showgrid=False, title="Time",
                    tickmode="array", tickvals=[i for i in range(simulation_length) if time_labels[i]],
                    ticktext=[time_labels[i] for i in range(simulation_length) if time_labels[i]]),
         yaxis=dict(showgrid=True, gridcolor="rgba(0,0,0,0.05)", title="Feeding load", range=[0, max_y]),
