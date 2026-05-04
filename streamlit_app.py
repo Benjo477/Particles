@@ -852,6 +852,9 @@ with st.sidebar:
     def pval(key, default):
         return st.session_state.get(f"pval_{key}", default)
 
+    planner_mode = st.radio("Planner mode", ["Simple", "Full"], horizontal=True,
+                            help="Simple keeps only the inputs most people need. Full exposes maintenance, simulation, and model controls.")
+
     st.header("1. Tank basics")
     tank_type = st.selectbox("Tank type", ["Shrimp Tank", "Fish Tank", "Mixed Tank", "Custom"],
                              index=["Shrimp Tank","Fish Tank","Mixed Tank","Custom"].index(pval("tank_type", wiz_tank)))
@@ -861,48 +864,73 @@ with st.sidebar:
     default_livestock = "Shrimp colony" if pval("tank_type", wiz_tank) == "Shrimp Tank" else "Small community fish"
     livestock_profile = st.selectbox("Livestock profile", list(LIVESTOCK_INFO.keys()),
                                      index=list(LIVESTOCK_INFO.keys()).index(pval("livestock_profile", default_livestock)))
-    life_stage = st.selectbox("Feeding context", list(LIFE_STAGE_INFO.keys()),
-                              index=list(LIFE_STAGE_INFO.keys()).index(pval("life_stage", "Adult / maintenance")))
-    stocking_level = st.selectbox("Stocking level", ["Light","Moderate","Heavy"],
-                                  index=["Light","Moderate","Heavy"].index(pval("stocking_level","Moderate")))
     feed_type      = st.selectbox("Food type", list(FEED_TYPE_INFO.keys()),
                                   index=list(FEED_TYPE_INFO.keys()).index(pval("feed_type", wiz_feed)))
 
-    with st.expander("Environment and filtration", expanded=False):
-        tank_maturity  = st.selectbox("Tank maturity", list(MATURITY_INFO.keys()), index=1)
-        substrate_type = st.selectbox("Substrate / biofilm", list(SUBSTRATE_INFO.keys()), index=1)
-        plant_density  = st.selectbox("Plant density", list(PLANT_INFO.keys()),
-                                      index=list(PLANT_INFO.keys()).index(pval("plant_density", "Low")))
-        filter_type    = st.selectbox("Filter type", list(FILTER_TYPE_INFO.keys()),
-                                      index=list(FILTER_TYPE_INFO.keys()).index(pval("filter_type", "Internal filter")))
-        filter_condition = st.selectbox("Filter condition", list(FILTER_CONDITION_INFO.keys()),
-                                        index=list(FILTER_CONDITION_INFO.keys()).index(pval("filter_condition", "Normal")))
-        flow_rate_lph  = st.slider("Filter flow rate (L/h)", 50, 3000, pval("flow_rate_lph", 300), 25)
-        temperature    = st.slider("Water temperature (°C)", 16, 32, pval("temperature", 24), 1)
-        st.caption(STOCKING_INFO[stocking_level])
-        st.caption(LIVESTOCK_INFO[livestock_profile]["description"])
-        st.caption(LIFE_STAGE_INFO[life_stage]["description"])
-        st.caption(FILTER_TYPE_INFO[filter_type]["description"])
-        st.caption(FILTER_CONDITION_INFO[filter_condition]["description"])
-        st.caption(FEED_TYPE_INFO[feed_type]["description"])
+    if planner_mode == "Full":
+        life_stage = st.selectbox("Feeding context", list(LIFE_STAGE_INFO.keys()),
+                                  index=list(LIFE_STAGE_INFO.keys()).index(pval("life_stage", "Adult / maintenance")))
+        stocking_level = st.selectbox("Stocking level", ["Light","Moderate","Heavy"],
+                                      index=["Light","Moderate","Heavy"].index(pval("stocking_level","Moderate")))
+        with st.expander("Environment and filtration", expanded=False):
+            tank_maturity  = st.selectbox("Tank maturity", list(MATURITY_INFO.keys()), index=1)
+            substrate_type = st.selectbox("Substrate / biofilm", list(SUBSTRATE_INFO.keys()), index=1)
+            plant_density  = st.selectbox("Plant density", list(PLANT_INFO.keys()),
+                                          index=list(PLANT_INFO.keys()).index(pval("plant_density", "Low")))
+            filter_type    = st.selectbox("Filter type", list(FILTER_TYPE_INFO.keys()),
+                                          index=list(FILTER_TYPE_INFO.keys()).index(pval("filter_type", "Internal filter")))
+            filter_condition = st.selectbox("Filter condition", list(FILTER_CONDITION_INFO.keys()),
+                                            index=list(FILTER_CONDITION_INFO.keys()).index(pval("filter_condition", "Normal")))
+            flow_rate_lph  = st.slider("Filter flow rate (L/h)", 50, 3000, pval("flow_rate_lph", 300), 25)
+            temperature    = st.slider("Water temperature (°C)", 16, 32, pval("temperature", 24), 1)
+            st.caption(STOCKING_INFO[stocking_level])
+            st.caption(LIVESTOCK_INFO[livestock_profile]["description"])
+            st.caption(LIFE_STAGE_INFO[life_stage]["description"])
+            st.caption(FILTER_TYPE_INFO[filter_type]["description"])
+            st.caption(FILTER_CONDITION_INFO[filter_condition]["description"])
+            st.caption(FEED_TYPE_INFO[feed_type]["description"])
+    else:
+        life_stage = pval("life_stage", "Adult / maintenance")
+        stocking_level = pval("stocking_level", "Moderate")
+        tank_maturity = pval("tank_maturity", "Established (1–6 months)")
+        substrate_type = pval("substrate_type", "Standard substrate")
+        plant_density = pval("plant_density", "Low")
+        filter_type = pval("filter_type", "Internal filter")
+        filter_condition = pval("filter_condition", "Normal")
+        flow_rate_lph = pval("flow_rate_lph", 300)
+        temperature = pval("temperature", 24)
+        with st.expander("Fine tune tank setup", expanded=False):
+            stocking_level = st.selectbox("Stocking level", ["Light","Moderate","Heavy"],
+                                          index=["Light","Moderate","Heavy"].index(stocking_level))
+            plant_density = st.selectbox("Plant density", list(PLANT_INFO.keys()),
+                                         index=list(PLANT_INFO.keys()).index(plant_density))
+            filter_condition = st.selectbox("Filter condition", list(FILTER_CONDITION_INFO.keys()),
+                                            index=list(FILTER_CONDITION_INFO.keys()).index(filter_condition))
 
     effective_flow_lph  = int(flow_rate_lph * float(FILTER_CONDITION_INFO[filter_condition]["flow_mult"]))
     turnover            = safe_div(effective_flow_lph, tank_size_l)
     filtration_strength = turnover_judgement(turnover, tank_type)
     st.caption(f"{tank_size_l}L {tank_type.lower()} · {stocking_level.lower()} stocking · {filtration_strength.lower()} filtration")
 
-    with st.expander("Maintenance and simulation", expanded=False):
-        water_change_pct  = st.slider("Water change amount (%)", 0, 50,
-                                      pval("water_change_pct", 20), 5)
-        water_change_days = st.slider("Every N days", 1, 14,
-                                      pval("water_change_days", 7), 1)
-        time_scale_label  = st.selectbox("Time interval", list(TIME_SCALE_OPTIONS.keys()), index=1)
+    if planner_mode == "Full":
+        with st.expander("Maintenance and simulation", expanded=False):
+            water_change_pct  = st.slider("Water change amount (%)", 0, 50,
+                                          pval("water_change_pct", 20), 5)
+            water_change_days = st.slider("Every N days", 1, 14,
+                                          pval("water_change_days", 7), 1)
+            time_scale_label  = st.selectbox("Time interval", list(TIME_SCALE_OPTIONS.keys()), index=1)
+            minutes_per_interval = TIME_SCALE_OPTIONS[time_scale_label]
+            simulation_length = st.slider("Simulation length (intervals)", 20, 288, 96, 4)
+            st.caption(f"Timeline: about {format_duration(simulation_length * minutes_per_interval)} total.")
+    else:
+        water_change_pct = pval("water_change_pct", 20)
+        water_change_days = pval("water_change_days", 7)
+        time_scale_label = "15 minutes"
         minutes_per_interval = TIME_SCALE_OPTIONS[time_scale_label]
-        simulation_length = st.slider("Simulation length (intervals)", 20, 288, 96, 4)
-        st.caption(f"Timeline: about {format_duration(simulation_length * minutes_per_interval)} total.")
+        simulation_length = 96
 
     st.header("2. Feeding plan")
-    feed_input_mode = st.radio("Feed amount input", ["Simple", "Advanced"], horizontal=True)
+    feed_input_mode = "Simple" if planner_mode == "Simple" else st.radio("Feed amount input", ["Simple", "Advanced"], horizontal=True)
     biomass_g       = estimate_biomass_g(tank_type, tank_size_l, stocking_level, int(animal_count), livestock_profile, life_stage)
 
     if feed_input_mode == "Simple":
@@ -917,10 +945,10 @@ with st.sidebar:
     approx_grams   = estimated_feed_grams(feed_amount, biomass_g)
     st.caption(f"{feed_level} feed · ~{approx_grams:.3f}g · {pellet_equivalent_text(feed_type, approx_grams)}")
 
-    schedule_mode = st.radio("Schedule mode", ["Daily schedule", "Timeline"], horizontal=True)
+    schedule_mode = "Daily schedule" if planner_mode == "Simple" else st.radio("Schedule mode", ["Daily schedule", "Timeline"], horizontal=True)
     if schedule_mode == "Daily schedule":
         feeds_per_day  = st.slider("Feeds per day", 0, 5, wiz_feeds_count)
-        days_to_sim    = st.slider("Days to simulate", 1, 7, 1)
+        days_to_sim    = 1 if planner_mode == "Simple" else st.slider("Days to simulate", 1, 7, 1)
         one_day_int    = int((24 * 60) / minutes_per_interval)
         simulation_length = max(simulation_length, one_day_int * days_to_sim)
         daily_pts: List[int] = []
@@ -944,24 +972,36 @@ with st.sidebar:
                                    min(default, simulation_length-1), 1)
             feed_times.append(ft)
 
-    goal = st.selectbox("Optimisation goal", list(GOAL_INFO.keys()))
-    st.caption(GOAL_INFO[goal])
+    if planner_mode == "Full":
+        goal = st.selectbox("Optimisation goal", list(GOAL_INFO.keys()))
+        st.caption(GOAL_INFO[goal])
+    else:
+        goal = "Balanced feeding"
 
     # ── Model options ──
-    with st.expander("Advanced model options"):
-        use_saturation = st.checkbox("Consumption saturation model", value=True,
-                                     help="Consumption rate slows when animals are full — more realistic for multiple daily feeds.")
-        show_baseline  = st.checkbox("Show baseline comparison", value=True)
-        use_custom     = st.checkbox("Override model rates manually")
-        if use_custom:
-            k_s = st.slider("Settling rate (kₛ)", 0.00, 0.50, 0.18, 0.01)
-            k_c = st.slider("Consumption rate (k_c)", 0.00, 0.50, 0.10, 0.01)
-            k_f = st.slider("Filtration rate (k_f)", 0.00, 0.50, 0.20, 0.01)
-        else:
-            k_s, k_c, k_f, _ = map_setup_to_rates(
-                tank_type, stocking_level, tank_size_l, filter_type, effective_flow_lph,
-                feed_type, tank_maturity, substrate_type, temperature, plant_density
-            )
+    use_saturation = True
+    show_baseline = True
+    use_custom = False
+    if planner_mode == "Full":
+        with st.expander("Advanced model options"):
+            use_saturation = st.checkbox("Consumption saturation model", value=True,
+                                         help="Consumption rate slows when animals are full — more realistic for multiple daily feeds.")
+            show_baseline  = st.checkbox("Show baseline comparison", value=True)
+            use_custom     = st.checkbox("Override model rates manually")
+            if use_custom:
+                k_s = st.slider("Settling rate (kₛ)", 0.00, 0.50, 0.18, 0.01)
+                k_c = st.slider("Consumption rate (k_c)", 0.00, 0.50, 0.10, 0.01)
+                k_f = st.slider("Filtration rate (k_f)", 0.00, 0.50, 0.20, 0.01)
+            else:
+                k_s, k_c, k_f, _ = map_setup_to_rates(
+                    tank_type, stocking_level, tank_size_l, filter_type, effective_flow_lph,
+                    feed_type, tank_maturity, substrate_type, temperature, plant_density
+                )
+    else:
+        k_s, k_c, k_f, _ = map_setup_to_rates(
+            tank_type, stocking_level, tank_size_l, filter_type, effective_flow_lph,
+            feed_type, tank_maturity, substrate_type, temperature, plant_density
+        )
 
     auto_optimise = st.button("Optimise feeding plan", type="primary")
     if st.button("Start over / change tank"):
