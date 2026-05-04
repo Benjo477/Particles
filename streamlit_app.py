@@ -738,16 +738,16 @@ wiz_feeds_count = {"Once a day": 1, "Twice a day": 2, "3+ times a day": 3, "Ever
 with st.sidebar:
     st.header("Planner controls")
 
-    # ── Presets ──
-    with st.expander("Load a preset tank", expanded=False):
+    with st.expander("Presets and saved profiles", expanded=False):
+        st.markdown("**Preset tanks**")
         for name in PRESETS:
             if st.button(name, use_container_width=True, key=f"preset_{name}"):
                 for k, v in PRESETS[name].items():
                     st.session_state[f"pval_{k}"] = v
                 st.rerun()
 
-    # ── Profiles ──
-    with st.expander("Saved tank profiles", expanded=False):
+        st.divider()
+        st.markdown("**Saved profiles**")
         profiles = st.session_state.profiles
         if profiles:
             load_name = st.selectbox("Load profile", ["— select —"] + list(profiles.keys()))
@@ -761,60 +761,48 @@ with st.sidebar:
             st.session_state["_pending_save_name"] = save_name
             st.success(f"Profile '{save_name}' saved.")
 
-    # ── Tank Setup ──
-    st.header("Tank setup")
-
     def pval(key, default):
         return st.session_state.get(f"pval_{key}", default)
 
+    st.header("1. Tank basics")
     tank_type = st.selectbox("Tank type", ["Shrimp Tank", "Fish Tank", "Mixed Tank", "Custom"],
                              index=["Shrimp Tank","Fish Tank","Mixed Tank","Custom"].index(pval("tank_type", wiz_tank)))
     tank_size_l    = st.slider("Tank size (litres)", 10, 500, pval("tank_size_l", wiz_size), 1)
-    animal_count   = st.number_input("Approximate animal count (0 = estimate)", min_value=0, max_value=2000,
+    animal_count   = st.number_input("Animal count (0 = estimate)", min_value=0, max_value=2000,
                                      value=pval("animal_count", wiz_count), step=1)
-    tank_maturity  = st.selectbox("Tank maturity", list(MATURITY_INFO.keys()), index=1)
-    substrate_type = st.selectbox("Substrate / biofilm", list(SUBSTRATE_INFO.keys()), index=1)
-    plant_density  = st.selectbox("Plant density", list(PLANT_INFO.keys()),
-                                  index=list(PLANT_INFO.keys()).index(pval("plant_density", "Low")))
-    filter_type    = st.selectbox("Filter type", list(FILTER_TYPE_INFO.keys()),
-                                  index=list(FILTER_TYPE_INFO.keys()).index(pval("filter_type", "Internal filter")))
-    flow_rate_lph  = st.slider("Filter flow rate (L/h)", 50, 3000, pval("flow_rate_lph", 300), 25)
     stocking_level = st.selectbox("Stocking level", ["Light","Moderate","Heavy"],
                                   index=["Light","Moderate","Heavy"].index(pval("stocking_level","Moderate")))
-    feed_type      = st.selectbox("Feed type", list(FEED_TYPE_INFO.keys()),
+    feed_type      = st.selectbox("Food type", list(FEED_TYPE_INFO.keys()),
                                   index=list(FEED_TYPE_INFO.keys()).index(pval("feed_type", wiz_feed)))
-    temperature    = st.slider("Water temperature (°C)", 16, 32, pval("temperature", 24), 1)
 
-    turnover               = safe_div(flow_rate_lph, tank_size_l)
-    filtration_strength    = turnover_judgement(turnover, tank_type)
+    with st.expander("Environment and filtration", expanded=False):
+        tank_maturity  = st.selectbox("Tank maturity", list(MATURITY_INFO.keys()), index=1)
+        substrate_type = st.selectbox("Substrate / biofilm", list(SUBSTRATE_INFO.keys()), index=1)
+        plant_density  = st.selectbox("Plant density", list(PLANT_INFO.keys()),
+                                      index=list(PLANT_INFO.keys()).index(pval("plant_density", "Low")))
+        filter_type    = st.selectbox("Filter type", list(FILTER_TYPE_INFO.keys()),
+                                      index=list(FILTER_TYPE_INFO.keys()).index(pval("filter_type", "Internal filter")))
+        flow_rate_lph  = st.slider("Filter flow rate (L/h)", 50, 3000, pval("flow_rate_lph", 300), 25)
+        temperature    = st.slider("Water temperature (°C)", 16, 32, pval("temperature", 24), 1)
+        st.caption(STOCKING_INFO[stocking_level])
+        st.caption(FILTER_TYPE_INFO[filter_type]["description"])
+        st.caption(FEED_TYPE_INFO[feed_type]["description"])
 
-    st.caption(STOCKING_INFO[stocking_level])
-    st.caption(MATURITY_INFO[tank_maturity]["description"])
-    st.caption(SUBSTRATE_INFO[substrate_type]["description"])
-    st.caption(PLANT_INFO[plant_density])
-    st.caption(FILTER_TYPE_INFO[filter_type]["description"])
-    st.caption(FEED_TYPE_INFO[feed_type]["description"])
-    st.caption(f"Turnover: {turnover:.1f}x/h ({filtration_strength.lower()} filtration) · {temperature}°C")
+    turnover            = safe_div(flow_rate_lph, tank_size_l)
+    filtration_strength = turnover_judgement(turnover, tank_type)
+    st.caption(f"{tank_size_l}L {tank_type.lower()} · {stocking_level.lower()} stocking · {filtration_strength.lower()} filtration")
 
-    # ── Water Changes ──
-    st.header("Water changes")
-    water_change_pct  = st.slider("Water change amount (%)", 0, 50,
-                                  pval("water_change_pct", 20), 5)
-    water_change_days = st.slider("Every N days", 1, 14,
-                                  pval("water_change_days", 7), 1,
-                                  help="Set to 0 to disable water changes in the simulation")
-    if water_change_pct > 0:
-        st.caption(f"Simulating a {water_change_pct}% water change every {water_change_days} day(s).")
+    with st.expander("Maintenance and simulation", expanded=False):
+        water_change_pct  = st.slider("Water change amount (%)", 0, 50,
+                                      pval("water_change_pct", 20), 5)
+        water_change_days = st.slider("Every N days", 1, 14,
+                                      pval("water_change_days", 7), 1)
+        time_scale_label  = st.selectbox("Time interval", list(TIME_SCALE_OPTIONS.keys()), index=1)
+        minutes_per_interval = TIME_SCALE_OPTIONS[time_scale_label]
+        simulation_length = st.slider("Simulation length (intervals)", 20, 288, 96, 4)
+        st.caption(f"Timeline: about {format_duration(simulation_length * minutes_per_interval)} total.")
 
-    # ── Simulation Settings ──
-    st.header("Simulation")
-    time_scale_label   = st.selectbox("Time interval", list(TIME_SCALE_OPTIONS.keys()), index=1)
-    minutes_per_interval = TIME_SCALE_OPTIONS[time_scale_label]
-    simulation_length  = st.slider("Simulation length (intervals)", 20, 288, 96, 4)
-    st.caption(f"Timeline: about {format_duration(simulation_length * minutes_per_interval)} total.")
-
-    # ── Feeding Plan ──
-    st.header("Feeding plan")
+    st.header("2. Feeding plan")
     feed_input_mode = st.radio("Feed amount input", ["Simple", "Advanced"], horizontal=True)
     biomass_g       = estimate_biomass_g(tank_type, tank_size_l, stocking_level, int(animal_count))
 
@@ -828,11 +816,8 @@ with st.sidebar:
 
     approx_pct_bw  = feed_amount_to_pct_bw(feed_amount)
     approx_grams   = estimated_feed_grams(feed_amount, biomass_g)
-    st.caption(f"**{feed_level}** feed · ~**{approx_pct_bw:.1f}%** body weight · ~**{approx_grams:.3f}g** for this setup")
-    st.caption(f"Estimated livestock biomass: ~**{biomass_g}g**")
-    st.caption(f"Visual guide: {pellet_equivalent_text(feed_type, approx_grams)}")
+    st.caption(f"{feed_level} feed · ~{approx_grams:.3f}g · {pellet_equivalent_text(feed_type, approx_grams)}")
 
-    # ── Schedule ──
     schedule_mode = st.radio("Schedule mode", ["Daily schedule", "Timeline"], horizontal=True)
     if schedule_mode == "Daily schedule":
         feeds_per_day  = st.slider("Feeds per day", 0, 5, wiz_feeds_count)
