@@ -27,13 +27,14 @@ st.markdown(
         max-width: 1180px;
     }
     section[data-testid="stSidebar"] {
-        border-right: 1px solid rgba(148, 163, 184, 0.18);
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(17, 24, 39, 0.98));
+        border-right: 1px solid rgba(45, 212, 191, 0.18);
     }
     section[data-testid="stSidebar"] h2 {
         font-size: 0.95rem;
         text-transform: uppercase;
         letter-spacing: 0.06em;
-        color: #94a3b8;
+        color: #8fb8bf;
         margin-top: 1.2rem;
     }
     h1, h2, h3 {
@@ -57,25 +58,37 @@ st.markdown(
     div[data-testid="stMetricDelta"] {
         line-height: 1.25;
     }
+    div[data-baseweb="select"],
+    div[data-baseweb="select"] *,
+    div[data-baseweb="input"],
+    div[data-baseweb="input"] *,
+    input {
+        color: #f8fafc !important;
+    }
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="input"] {
+        background: rgba(2, 6, 23, 0.68) !important;
+        border-color: rgba(148, 163, 184, 0.18) !important;
+    }
     button[kind="primary"], button[data-testid="stBaseButton-primary"] {
-        background: #0ea5e9;
-        border-color: #0ea5e9;
+        background: #0f766e;
+        border-color: #0f766e;
         color: #ffffff;
     }
     button[kind="primary"]:hover, button[data-testid="stBaseButton-primary"]:hover {
-        background: #0284c7;
-        border-color: #0284c7;
+        background: #0d9488;
+        border-color: #0d9488;
         color: #ffffff;
     }
     button[data-baseweb="tab"][aria-selected="true"] {
-        color: #38bdf8 !important;
-        border-bottom: 2px solid #38bdf8 !important;
+        color: #2dd4bf !important;
+        border-bottom: 2px solid #2dd4bf !important;
     }
     button[data-baseweb="tab"][aria-selected="true"] p {
-        color: #38bdf8 !important;
+        color: #2dd4bf !important;
     }
     .product-eyebrow {
-        color: #94a3b8;
+        color: #8fb8bf;
         display: block;
         font-size: 0.82rem;
         font-weight: 700;
@@ -173,9 +186,9 @@ st.markdown(
         overflow-wrap: anywhere;
     }
     .note-box {
-        border: 1px solid rgba(14, 165, 233, 0.22);
+        border: 1px solid rgba(45, 212, 191, 0.22);
         border-radius: 8px;
-        background: rgba(14, 165, 233, 0.06);
+        background: rgba(45, 212, 191, 0.06);
         padding: 0.85rem 1rem;
         margin: 0.65rem 0 1rem;
         color: #cbd5e1;
@@ -212,6 +225,41 @@ FEED_TYPE_INFO = {
     "Powder / shrimp food":          {"spike": 1.35, "linger": 1.12, "description": "Spreads fast through the water column — spikes quickly.",         "visual": "roughly a visible dusting",                  "grams_per_pellet": None},
     "Frozen / live food":            {"spike": 1.15, "linger": 0.92, "description": "Richer and messier, but not as instantly dispersed as powder.",   "visual": "roughly a small cube or chunk equivalent",   "grams_per_pellet": None},
     "Slow-release / wafers":         {"spike": 0.70, "linger": 0.65, "description": "Releases waste gradually — lower spike, longer duration.",        "visual": "roughly one wafer or small piece",           "grams_per_pellet": None},
+    "Shrimp pellet / stick":          {"spike": 0.92, "linger": 0.95, "description": "Controlled supplemental shrimp food. Easier to remove if uneaten.", "visual": "roughly 1 small pellet/stick fragment",       "grams_per_pellet": None},
+    "Bacter / biofilm powder":        {"spike": 1.45, "linger": 1.18, "description": "Useful for shrimplets but disperses quickly. Easy to overdo.",     "visual": "a very light dusting",                       "grams_per_pellet": None},
+    "Snowflake / soybean hull":       {"spike": 0.58, "linger": 0.72, "description": "Slow grazing food. Lower spike but can remain in the tank.",       "visual": "one small snowflake piece",                  "grams_per_pellet": None},
+    "Mineral food":                   {"spike": 0.75, "linger": 0.85, "description": "Supplemental mineral feed. Usually fed sparingly.",              "visual": "a tiny mineral piece",                       "grams_per_pellet": None},
+    "Protein shrimp food":            {"spike": 1.25, "linger": 1.05, "description": "Useful for conditioning, but higher fouling risk.",               "visual": "a small protein pellet fragment",            "grams_per_pellet": None},
+    "Blanched vegetable":             {"spike": 0.85, "linger": 1.10, "description": "Grazing food that should be removed if not cleared.",             "visual": "a fingernail-sized piece",                   "grams_per_pellet": None},
+}
+
+TANK_PURPOSE_INFO = {
+    "General display": "Everyday aquarium feeding with a conservative waste margin.",
+    "Shrimp colony / breeder": "Neocaridina/Caridina colony feeding with biofilm, shrimplets, and sale-tank stability in mind.",
+    "Fish breeding / grow-out": "Frequent smaller feeds for fry, juveniles, conditioning, or grow-out systems.",
+}
+
+SHRIMP_SPECIES_INFO = {
+    "Neocaridina": {"surface_per_adult": 22, "description": "Hardy dwarf shrimp. Biofilm and stable grazing surfaces are central to colony success."},
+    "Caridina": {"surface_per_adult": 28, "description": "Often more sensitive. Keep recommendations more conservative."},
+    "Mixed dwarf shrimp": {"surface_per_adult": 26, "description": "Use conservative estimates when species needs differ."},
+}
+
+SHRIMP_COLONY_STAGE_INFO = {
+    "Starter colony": {"density_mult": 0.75, "description": "Build stability before pushing feed or stocking."},
+    "Growing colony": {"density_mult": 1.0, "description": "Balanced growth and stability."},
+    "Breeding colony": {"density_mult": 1.12, "description": "More juveniles and berried females; feed small and consistent."},
+    "Sale / holding tank": {"density_mult": 0.82, "description": "Prioritise clean water and stable condition before selling/shipping."},
+}
+
+WOOD_TYPE_INFO = {
+    "None": {"texture": 0.0, "description": "No wood-based grazing surface."},
+    "Cholla": {"texture": 2.4, "description": "Excellent porous shrimp grazing surface."},
+    "Spider wood": {"texture": 1.35, "description": "Branching surface with good biofilm development."},
+    "Mopani": {"texture": 1.05, "description": "Dense, durable wood with moderate surface texture."},
+    "Bogwood / driftwood": {"texture": 1.25, "description": "Variable but usually good once mature."},
+    "Manzanita": {"texture": 1.10, "description": "Hard, durable wood with moderate biofilm value."},
+    "Unknown aquarium wood": {"texture": 1.0, "description": "Conservative default for aquarium-safe wood."},
 }
 
 LIVESTOCK_INFO = {
@@ -479,6 +527,49 @@ def pellet_equivalent_text(feed_type: str, grams: float) -> str:
         if count <= 20: return f"about {count} small-to-medium pellets"
         return f"about {count} pellets (heavy feed)"
     return str(info["visual"])
+
+def estimate_shrimp_biofilm_surface(
+    tank_size_l: int, shrimp_species: str, colony_stage: str,
+    wood_type: str, wood_pieces: int, wood_length_cm: float, wood_diameter_cm: float,
+    moss_cover: str, plant_density: str, leaf_litter: str, visible_biofilm: str,
+    snail_presence: str,
+) -> Dict[str, float | str]:
+    # This is a husbandry estimate of grazeable surface, not a geometric survey.
+    base_surface = tank_size_l * 32.0
+    wood_texture = float(WOOD_TYPE_INFO[wood_type]["texture"])
+    wood_surface = 0.0
+    if wood_texture > 0 and wood_pieces > 0 and wood_length_cm > 0:
+        cylinder_area = 3.1416 * max(0.5, wood_diameter_cm) * wood_length_cm
+        wood_surface = cylinder_area * wood_pieces * wood_texture
+
+    moss_mult = {"None": 0.0, "Small clump": 0.10, "Moderate": 0.22, "Dense": 0.38}[moss_cover]
+    plant_mult = {"None": 0.0, "Low": 0.08, "Moderate": 0.18, "High": 0.30}[plant_density]
+    litter_surface = {"None": 0.0, "Few leaves": 140.0, "Moderate": 320.0, "Heavy": 560.0}[leaf_litter]
+    biofilm_mult = {"Low": 0.82, "Moderate": 1.0, "Heavy": 1.18}[visible_biofilm]
+    snail_mult = {"None": 1.0, "Few": 0.95, "Many": 0.86}[snail_presence]
+
+    plant_surface = base_surface * (moss_mult + plant_mult)
+    estimated_surface = (base_surface + wood_surface + plant_surface + litter_surface) * biofilm_mult * snail_mult
+    per_adult = float(SHRIMP_SPECIES_INFO[shrimp_species]["surface_per_adult"])
+    stage_mult = float(SHRIMP_COLONY_STAGE_INFO[colony_stage]["density_mult"])
+    supported = max(5, int((estimated_surface / per_adult) * stage_mult))
+    low = max(5, int(supported * 0.7))
+    high = max(low + 1, int(supported * 1.25))
+
+    if supported < 40:
+        support_word = "Low"
+    elif supported < 120:
+        support_word = "Moderate"
+    else:
+        support_word = "High"
+
+    return {
+        "surface_cm2": round(estimated_surface),
+        "wood_surface_cm2": round(wood_surface),
+        "supported_adults": supported,
+        "supported_range": f"{low}-{high}",
+        "support_word": support_word,
+    }
 
 # ─────────────────────────────────────────────
 # IMPROVED MODEL
@@ -770,7 +861,15 @@ def show_onboarding():
 
     elif step == 2:
         st.markdown("### How big is the tank?")
-        size = st.slider("Tank size (litres)", 10, 500, 60, 1)
+        size = st.number_input("Exact litres", 10, 500, int(wiz.get("tank_size_l", 60)), 1)
+        st.caption("Use the real water volume if you know it. This accepts single-litre values, not just jumps of 10.")
+        presets = st.columns(5)
+        for col, preset in zip(presets, [20, 30, 45, 60, 100]):
+            with col:
+                if st.button(f"{preset}L", use_container_width=True, key=f"wiz_size_{preset}"):
+                    size = preset
+                    wiz["tank_size_l"] = size
+                    st.rerun()
         hint = ("Very small — be conservative with feeding." if size <= 20 else
                 "Small — less margin for error." if size <= 50 else
                 "Medium — reasonable margin." if size <= 100 else
@@ -885,6 +984,11 @@ with st.sidebar:
 
     planner_mode = st.radio("Planner mode", ["Simple", "Full"], horizontal=True,
                             help="Simple keeps only the inputs most people need. Full exposes maintenance, simulation, and model controls.")
+    tank_purpose = st.selectbox("Tank purpose", list(TANK_PURPOSE_INFO.keys()),
+                                index=list(TANK_PURPOSE_INFO.keys()).index(
+                                    pval("tank_purpose", "Shrimp colony / breeder" if wiz_tank == "Shrimp Tank" else "General display")
+                                ))
+    st.caption(TANK_PURPOSE_INFO[tank_purpose])
 
     st.header("1. Tank basics")
     tank_type = st.selectbox("Tank type", ["Shrimp Tank", "Fish Tank", "Mixed Tank", "Custom"],
@@ -892,11 +996,68 @@ with st.sidebar:
     tank_size_l    = st.slider("Tank size (litres)", 10, 500, pval("tank_size_l", wiz_size), 1)
     animal_count   = st.number_input("Animal count (0 = estimate)", min_value=0, max_value=2000,
                                      value=pval("animal_count", wiz_count), step=1)
-    default_livestock = "Shrimp colony" if pval("tank_type", wiz_tank) == "Shrimp Tank" else "Small community fish"
+    default_livestock = "Shrimp colony" if tank_purpose == "Shrimp colony / breeder" or pval("tank_type", wiz_tank) == "Shrimp Tank" else "Small community fish"
     livestock_profile = st.selectbox("Livestock profile", list(LIVESTOCK_INFO.keys()),
                                      index=list(LIVESTOCK_INFO.keys()).index(pval("livestock_profile", default_livestock)))
-    feed_type      = st.selectbox("Food type", list(FEED_TYPE_INFO.keys()),
-                                  index=list(FEED_TYPE_INFO.keys()).index(pval("feed_type", wiz_feed)))
+    purpose_foods = list(FEED_TYPE_INFO.keys())
+    if tank_purpose == "Shrimp colony / breeder":
+        purpose_foods = ["Shrimp pellet / stick", "Bacter / biofilm powder", "Snowflake / soybean hull", "Mineral food", "Protein shrimp food", "Blanched vegetable", "Powder / shrimp food", "Slow-release / wafers"]
+    elif tank_purpose == "Fish breeding / grow-out":
+        purpose_foods = ["Powder / shrimp food", "Frozen / live food", "Flakes", "Pellets"]
+    feed_default = pval("feed_type", purpose_foods[0] if tank_purpose == "Shrimp colony / breeder" else wiz_feed)
+    if feed_default not in purpose_foods:
+        feed_default = purpose_foods[0]
+    feed_type      = st.selectbox("Food type", purpose_foods,
+                                  index=purpose_foods.index(feed_default))
+
+    shrimp_breeder_enabled = tank_purpose == "Shrimp colony / breeder"
+    shrimp_species = "Neocaridina"
+    colony_stage = "Growing colony"
+    adult_shrimp = int(animal_count)
+    juvenile_shrimp = 0
+    shrimplet_level = "Some"
+    berried_females = "Some present"
+    moss_cover = "Moderate"
+    leaf_litter = "Few leaves"
+    visible_biofilm = "Moderate"
+    snail_presence = "Few"
+    wood_type = "Cholla"
+    wood_pieces = 1
+    wood_length_cm = 5.0
+    wood_diameter_cm = 2.0
+
+    if shrimp_breeder_enabled:
+        st.header("2. Shrimp breeder setup")
+        shrimp_species = st.selectbox("Shrimp species", list(SHRIMP_SPECIES_INFO.keys()),
+                                      index=list(SHRIMP_SPECIES_INFO.keys()).index(pval("shrimp_species", "Neocaridina")))
+        colony_stage = st.selectbox("Colony stage", list(SHRIMP_COLONY_STAGE_INFO.keys()),
+                                    index=list(SHRIMP_COLONY_STAGE_INFO.keys()).index(pval("colony_stage", "Growing colony")))
+        adult_shrimp = st.number_input("Adult shrimp", min_value=0, max_value=5000,
+                                       value=pval("adult_shrimp", max(int(animal_count), 0)), step=1)
+        juvenile_shrimp = st.number_input("Juveniles / sub-adults", min_value=0, max_value=5000,
+                                          value=pval("juvenile_shrimp", 0), step=1)
+        shrimplet_level = st.selectbox("Shrimplets", ["None seen", "Some", "Many"],
+                                       index=["None seen", "Some", "Many"].index(pval("shrimplet_level", "Some")))
+        berried_females = st.selectbox("Berried females", ["None seen", "Some present", "Many present"],
+                                       index=["None seen", "Some present", "Many present"].index(pval("berried_females", "Some present")))
+
+        with st.expander("Biofilm and grazing surface", expanded=True):
+            wood_type = st.selectbox("Wood type", list(WOOD_TYPE_INFO.keys()),
+                                     index=list(WOOD_TYPE_INFO.keys()).index(pval("wood_type", "Cholla")))
+            wood_pieces = st.number_input("Wood pieces", min_value=0, max_value=30,
+                                          value=pval("wood_pieces", 1), step=1)
+            wood_length_cm = st.number_input("Average wood length (cm)", min_value=0.0, max_value=120.0,
+                                             value=float(pval("wood_length_cm", 5.0)), step=0.5)
+            wood_diameter_cm = st.number_input("Average wood diameter (cm)", min_value=0.5, max_value=20.0,
+                                               value=float(pval("wood_diameter_cm", 2.0)), step=0.5)
+            moss_cover = st.selectbox("Moss / fine plant cover", ["None", "Small clump", "Moderate", "Dense"],
+                                      index=["None", "Small clump", "Moderate", "Dense"].index(pval("moss_cover", "Moderate")))
+            leaf_litter = st.selectbox("Leaf litter / botanicals", ["None", "Few leaves", "Moderate", "Heavy"],
+                                       index=["None", "Few leaves", "Moderate", "Heavy"].index(pval("leaf_litter", "Few leaves")))
+            visible_biofilm = st.selectbox("Visible biofilm / algae", ["Low", "Moderate", "Heavy"],
+                                           index=["Low", "Moderate", "Heavy"].index(pval("visible_biofilm", "Moderate")))
+            snail_presence = st.selectbox("Snails", ["None", "Few", "Many"],
+                                          index=["None", "Few", "Many"].index(pval("snail_presence", "Few")))
 
     if planner_mode == "Full":
         life_stage = st.selectbox("Feeding context", list(LIFE_STAGE_INFO.keys()),
@@ -960,9 +1121,29 @@ with st.sidebar:
         minutes_per_interval = TIME_SCALE_OPTIONS[time_scale_label]
         simulation_length = 96
 
-    st.header("2. Feeding plan")
+    biofilm_result = None
+    if shrimp_breeder_enabled:
+        biofilm_result = estimate_shrimp_biofilm_surface(
+            tank_size_l, shrimp_species, colony_stage, wood_type, int(wood_pieces),
+            float(wood_length_cm), float(wood_diameter_cm), moss_cover, plant_density,
+            leaf_litter, visible_biofilm, snail_presence,
+        )
+        st.caption(
+            f"Biofilm support: {biofilm_result['support_word'].lower()} · "
+            f"estimated grazing surface {biofilm_result['surface_cm2']:,} cm² · "
+            f"biofilm-supported adults {biofilm_result['supported_range']}"
+        )
+
+    st.header("3. Feeding plan" if shrimp_breeder_enabled else "2. Feeding plan")
     feed_input_mode = "Simple" if planner_mode == "Simple" else st.radio("Feed amount input", ["Simple", "Advanced"], horizontal=True)
-    biomass_g       = estimate_biomass_g(tank_type, tank_size_l, stocking_level, int(animal_count), livestock_profile, life_stage)
+    if shrimp_breeder_enabled:
+        shrimplet_estimate = {"None seen": 0, "Some": 25, "Many": 80}[shrimplet_level]
+        stage_mult = float(LIFE_STAGE_INFO[life_stage]["feed_mult"])
+        biomass_g = round(max((adult_shrimp * 0.35) + (juvenile_shrimp * 0.16) + (shrimplet_estimate * 0.035), 2.0) * stage_mult, 1)
+        animal_count_for_confidence = int(adult_shrimp + juvenile_shrimp)
+    else:
+        biomass_g = estimate_biomass_g(tank_type, tank_size_l, stocking_level, int(animal_count), livestock_profile, life_stage)
+        animal_count_for_confidence = int(animal_count)
 
     if feed_input_mode == "Simple":
         feed_level  = st.select_slider("Feed size", options=list(SIMPLE_FEED_LEVELS.keys()), value="Normal")
@@ -1088,13 +1269,13 @@ summary_text  = generate_summary(overlap, peak_value, bool(gap_ok), goal)
 visible_eff   = visible_tank_effects(tank_type, peak_value, overlap)
 reality_chks  = reality_check_list(tank_type)
 confidence_label, confidence_score_text = confidence_rating(
-    int(animal_count), livestock_profile, tank_type, filter_condition, use_custom, schedule_mode
+    animal_count_for_confidence, livestock_profile, tank_type, filter_condition, use_custom, schedule_mode
 )
 confidence_reasons, confidence_actions = confidence_guidance(
-    int(animal_count), livestock_profile, tank_type, filter_condition, use_custom, schedule_mode
+    animal_count_for_confidence, livestock_profile, tank_type, filter_condition, use_custom, schedule_mode
 )
 setup_flags = setup_risk_flags(
-    tank_type, tank_size_l, int(animal_count), livestock_profile, filter_condition,
+    tank_type, tank_size_l, animal_count_for_confidence, livestock_profile, filter_condition,
     plant_density, tank_maturity, feed_type, water_change_pct, len(feed_times)
 )
 visual_equivalent = pellet_equivalent_text(feed_type, approx_grams)
@@ -1111,20 +1292,26 @@ suggested_visual = pellet_equivalent_text(feed_type, suggested_g)
 if "_pending_save_name" in st.session_state:
     pname = st.session_state.pop("_pending_save_name")
     st.session_state.profiles[pname] = {
-        "tank_type": tank_type, "tank_size_l": tank_size_l, "animal_count": int(animal_count),
+        "tank_purpose": tank_purpose, "tank_type": tank_type, "tank_size_l": tank_size_l, "animal_count": int(animal_count),
         "livestock_profile": livestock_profile, "life_stage": life_stage,
         "tank_maturity": tank_maturity, "substrate_type": substrate_type, "plant_density": plant_density,
         "filter_type": filter_type, "flow_rate_lph": flow_rate_lph, "stocking_level": stocking_level,
         "filter_condition": filter_condition, "feed_type": feed_type, "temperature": temperature, "water_change_pct": water_change_pct,
-        "water_change_days": water_change_days,
+        "water_change_days": water_change_days, "shrimp_species": shrimp_species, "colony_stage": colony_stage,
+        "adult_shrimp": int(adult_shrimp), "juvenile_shrimp": int(juvenile_shrimp), "shrimplet_level": shrimplet_level,
+        "berried_females": berried_females, "wood_type": wood_type, "wood_pieces": int(wood_pieces),
+        "wood_length_cm": float(wood_length_cm), "wood_diameter_cm": float(wood_diameter_cm),
+        "moss_cover": moss_cover, "leaf_litter": leaf_litter, "visible_biofilm": visible_biofilm,
+        "snail_presence": snail_presence,
     }
 
 # ─────────────────────────────────────────────
 # HEADER
 # ─────────────────────────────────────────────
 
+result_title = "Shrimp colony recommendation" if shrimp_breeder_enabled else ("Grow-out feeding recommendation" if tank_purpose == "Fish breeding / grow-out" else "Feeding recommendation")
 st.markdown('<p class="product-eyebrow">AquaFeed Optimiser</p>', unsafe_allow_html=True)
-st.markdown('<h1 class="product-title">Feeding recommendation</h1>', unsafe_allow_html=True)
+st.markdown(f'<h1 class="product-title">{escape(result_title)}</h1>', unsafe_allow_html=True)
 st.markdown(
     '<p class="product-subtitle">A practical estimate of feed amount, recovery time, and relative feeding-load risk for the current setup.</p>',
     unsafe_allow_html=True,
@@ -1159,33 +1346,29 @@ else:
         unsafe_allow_html=True,
     )
 
-st.markdown(
-    f"""
-    <div class="summary-grid">
-        <div class="summary-card">
-            <div class="summary-label">Feed this</div>
-            <div class="summary-value">{escape(visual_equivalent)}</div>
-        </div>
-        <div class="summary-card">
-            <div class="summary-label">Gram estimate</div>
-            <div class="summary-value">{approx_grams:.3f} g</div>
-        </div>
-        <div class="summary-card">
-            <div class="summary-label">Minimum gap</div>
-            <div class="summary-value">{format_duration(gap_mins)}</div>
-        </div>
-        <div class="summary-card">
-            <div class="summary-label">Recovery</div>
-            <div class="summary-value">{format_duration(recovery_mins)}</div>
-        </div>
-        <div class="summary-card">
-            <div class="summary-label">Confidence</div>
-            <div class="summary-value">{confidence_label}</div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+summary_cards = [
+    ("Feed this", escape(visual_equivalent)),
+    ("Gram estimate", f"{approx_grams:.3f} g"),
+    ("Minimum gap", format_duration(gap_mins)),
+    ("Recovery", format_duration(recovery_mins)),
+    ("Confidence", confidence_label),
+]
+if shrimp_breeder_enabled and biofilm_result:
+    summary_cards.extend([
+        ("Biofilm support", escape(str(biofilm_result["support_word"]))),
+        ("Supported adults", escape(str(biofilm_result["supported_range"]))),
+    ])
+
+summary_html = '<div class="summary-grid">'
+for label, value in summary_cards:
+    summary_html += (
+        '<div class="summary-card">'
+        f'<div class="summary-label">{label}</div>'
+        f'<div class="summary-value">{value}</div>'
+        '</div>'
+    )
+summary_html += '</div>'
+st.markdown(summary_html, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
 # TABS
@@ -1231,6 +1414,23 @@ with tab_overview:
             st.caption("Use tank observation and water tests to confirm the forecast.")
 
     st.divider()
+
+    if shrimp_breeder_enabled and biofilm_result:
+        st.subheader("Shrimp breeder view")
+        b1, b2, b3, b4 = st.columns(4)
+        b1.metric("Grazing surface", f"{int(biofilm_result['surface_cm2']):,} cm²")
+        b2.metric("Biofilm support", str(biofilm_result["support_word"]))
+        b3.metric("Adult support range", str(biofilm_result["supported_range"]))
+        b4.metric("Wood contribution", f"{int(biofilm_result['wood_surface_cm2']):,} cm²")
+        st.caption(
+            "The adult support range estimates biofilm-supported grazing capacity, not a hard stocking limit. "
+            "Filtration, water changes, minerals, oxygen, genetics, and sale/holding goals still matter."
+        )
+        if colony_stage == "Sale / holding tank":
+            st.warning("Sale/holding tanks should be run cleaner and more conservatively than grow-out tanks.")
+        if shrimplet_level != "None seen":
+            st.info("Shrimplets present: favour smaller, consistent feeds and keep fine grazing surfaces available.")
+        st.divider()
 
     # ── Primary metrics ──
     m1, m2, m3, m4 = st.columns(4)
