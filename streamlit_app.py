@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import time, datetime
+from datetime import time, datetime, timedelta
 from html import escape
 from typing import Dict, List, Tuple, Optional
 
@@ -262,6 +262,37 @@ WOOD_TYPE_INFO = {
     "Unknown aquarium wood": {"texture": 1.0, "description": "Conservative default for aquarium-safe wood."},
 }
 
+HARDSCAPE_TYPE_INFO = {
+    **WOOD_TYPE_INFO,
+    "Lava rock": {"texture": 1.65, "description": "Porous rock with strong grazing surface once mature."},
+    "Dragon stone": {"texture": 1.25, "description": "Textured stone with moderate biofilm surface."},
+    "Slate / smooth stone": {"texture": 0.55, "description": "Lower texture; useful cover but less grazing surface."},
+    "Ceramic cave / media": {"texture": 1.75, "description": "Porous ceramic shelter or media with strong biofilm value."},
+}
+
+MOSS_COVER_OPTIONS = {
+    "None": 0.0,
+    "Small clump (golf-ball size)": 0.10,
+    "Moderate (covers 10-25% of hardscape)": 0.22,
+    "Dense (covers 25%+ of hardscape)": 0.38,
+}
+LEAF_LITTER_OPTIONS = {
+    "None": 0.0,
+    "Few leaves (1-3 small leaves)": 140.0,
+    "Moderate (4-8 leaves / light floor cover)": 320.0,
+    "Heavy (9+ leaves / obvious leaf bed)": 560.0,
+}
+VISIBLE_BIOFILM_OPTIONS = {
+    "Low (surfaces look clean/new)": 0.82,
+    "Moderate (light film, shrimp graze often)": 1.0,
+    "Heavy (visible film/algae on hardscape)": 1.18,
+}
+SNAIL_OPTIONS = {
+    "None": 1.0,
+    "Few (1-10 visible)": 0.95,
+    "Many (10+ visible or breeding)": 0.86,
+}
+
 LIVESTOCK_INFO = {
     "Shrimp colony": {"avg_weight": 0.35, "description": "Best for neocaridina/caridina colonies where biofilm and grazing matter."},
     "Small community fish": {"avg_weight": 1.5, "description": "Tetras, rasboras, endlers, small guppies, and similar fish."},
@@ -284,8 +315,8 @@ FILTER_CONDITION_INFO = {
     "Needs maintenance": {"flow_mult": 0.62, "description": "Reduced flow and less margin after feeding."},
 }
 
-STOCKING_INFO   = {"Light": "Few animals for the tank size — lower waste production.", "Moderate": "Typical home stocking — balanced waste.", "Heavy": "High population — higher waste, less margin for error."}
-PLANT_INFO      = {"None": "No plants — no additional nutrient uptake.", "Low": "A few stems or low-coverage plants.", "Moderate": "Reasonably planted — some nutrient uptake and biofilm.", "High": "Heavily planted — better long-term stability, but not instant leftover-food removal."}
+STOCKING_INFO   = {"Light": "Low stocking: the tank looks understocked and food disappears easily.", "Moderate": "Moderate stocking: active colony/fish group, but open space remains and water stays stable.", "Heavy": "Heavy stocking: crowded, high activity, or frequent visible waste; less margin for error."}
+PLANT_INFO      = {"None": "No live plants.", "Low": "Low: 1-3 small plants, a little moss, or less than 10% of the tank footprint covered.", "Moderate": "Moderate: several stems/rosettes/moss patches, about 10-35% coverage.", "High": "High: dense planting, floaters, moss, or 35%+ coverage."}
 MATURITY_INFO   = {
     "New (<1 month)":          {"multiplier": 0.88, "description": "Less stable and less forgiving of waste spikes."},
     "Established (1–6 months)":{"multiplier": 1.00, "description": "More stable and predictable."},
@@ -532,24 +563,43 @@ def estimate_shrimp_biofilm_surface(
     tank_size_l: int, shrimp_species: str, colony_stage: str,
     wood_type: str, wood_pieces: int, wood_length_cm: float, wood_diameter_cm: float,
     moss_cover: str, plant_density: str, leaf_litter: str, visible_biofilm: str,
-    snail_presence: str,
+    snail_presence: str, hardscape_items: Optional[List[Dict]] = None,
 ) -> Dict[str, float | str]:
     # This is a husbandry estimate of grazeable surface, not a geometric survey.
     base_surface = tank_size_l * 32.0
-    wood_texture = float(WOOD_TYPE_INFO[wood_type]["texture"])
-    wood_surface = 0.0
-    if wood_texture > 0 and wood_pieces > 0 and wood_length_cm > 0:
-        cylinder_area = 3.1416 * max(0.5, wood_diameter_cm) * wood_length_cm
-        wood_surface = cylinder_area * wood_pieces * wood_texture
+    if not hardscape_items:
+        hardscape_items = [{
+            "type": wood_type, "pieces": wood_pieces,
+            "length_cm": wood_length_cm, "diameter_cm": wood_diameter_cm,
+        }]
 
-    moss_mult = {"None": 0.0, "Small clump": 0.10, "Moderate": 0.22, "Dense": 0.38}[moss_cover]
+    hardscape_surface = 0.0
+    wood_surface = 0.0
+    rock_surface = 0.0
+    for item in hardscape_items:
+        item_type = str(item.get("type", "None"))
+        texture = float(HARDSCAPE_TYPE_INFO.get(item_type, HARDSCAPE_TYPE_INFO["Unknown aquarium wood"])["texture"])
+        pieces = int(item.get("pieces", 0))
+        length_cm = float(item.get("length_cm", 0.0))
+        diameter_cm = float(item.get("diameter_cm", 0.0))
+        if texture <= 0 or pieces <= 0 or length_cm <= 0:
+            continue
+        cylinder_area = 3.1416 * max(0.5, diameter_cm) * length_cm
+        item_surface = cylinder_area * pieces * texture
+        hardscape_surface += item_surface
+        if "rock" in item_type.lower() or "stone" in item_type.lower() or "ceramic" in item_type.lower():
+            rock_surface += item_surface
+        else:
+            wood_surface += item_surface
+
+    moss_mult = MOSS_COVER_OPTIONS[moss_cover]
     plant_mult = {"None": 0.0, "Low": 0.08, "Moderate": 0.18, "High": 0.30}[plant_density]
-    litter_surface = {"None": 0.0, "Few leaves": 140.0, "Moderate": 320.0, "Heavy": 560.0}[leaf_litter]
-    biofilm_mult = {"Low": 0.82, "Moderate": 1.0, "Heavy": 1.18}[visible_biofilm]
-    snail_mult = {"None": 1.0, "Few": 0.95, "Many": 0.86}[snail_presence]
+    litter_surface = LEAF_LITTER_OPTIONS[leaf_litter]
+    biofilm_mult = VISIBLE_BIOFILM_OPTIONS[visible_biofilm]
+    snail_mult = SNAIL_OPTIONS[snail_presence]
 
     plant_surface = base_surface * (moss_mult + plant_mult)
-    estimated_surface = (base_surface + wood_surface + plant_surface + litter_surface) * biofilm_mult * snail_mult
+    estimated_surface = (base_surface + hardscape_surface + plant_surface + litter_surface) * biofilm_mult * snail_mult
     per_adult = float(SHRIMP_SPECIES_INFO[shrimp_species]["surface_per_adult"])
     stage_mult = float(SHRIMP_COLONY_STAGE_INFO[colony_stage]["density_mult"])
     supported = max(5, int((estimated_surface / per_adult) * stage_mult))
@@ -566,6 +616,8 @@ def estimate_shrimp_biofilm_surface(
     return {
         "surface_cm2": round(estimated_surface),
         "wood_surface_cm2": round(wood_surface),
+        "rock_surface_cm2": round(rock_surface),
+        "hardscape_surface_cm2": round(hardscape_surface),
         "supported_adults": supported,
         "supported_range": f"{low}-{high}",
         "support_word": support_word,
@@ -720,7 +772,8 @@ def overall_efficiency_score(timing: float, load: float) -> float:
 
 def generate_summary(overlap: bool, peak: float, gap_ok: bool, goal: str) -> str:
     if overlap and peak > 6: return "Your feeds are too close and each feed is too heavy for this setup."
-    if overlap:              return "Your feeds are too close — the tank isn't recovering in time."
+    if overlap and peak > 4: return "Feeds overlap slightly; spacing is worth reviewing."
+    if overlap and peak <= 4: return "The graph stays in the safe zone, so the overlap is not a practical concern."
     if peak > 6:             return "Your timing is fine, but each feed is too heavy for this setup."
     if goal == "Minimise waste": return "This plan keeps waste risk low — well suited to your goal."
     if goal == "Maximise feeding frequency": return "This plan handles multiple feeds cleanly for your setup."
@@ -914,7 +967,11 @@ def show_onboarding():
 
     elif step == 5:
         st.markdown("### How often do you currently feed?")
-        freq_label = st.radio("", ["Once a day", "Twice a day", "3+ times a day", "Every other day"], horizontal=True)
+        freq_label = st.radio(
+            "",
+            ["As-needed / irregular", "Twice a week", "Once a week", "Every 2 weeks", "Once a day", "Twice a day"],
+            horizontal=True,
+        )
         wiz["feed_freq"] = freq_label
         col1, col2 = st.columns([1, 3])
         with col1:
@@ -946,8 +1003,12 @@ wiz_tank        = wiz.get("tank_type", "Fish Tank")
 wiz_size        = wiz.get("tank_size_l", 60)
 wiz_count       = wiz.get("animal_count", 0)
 wiz_feed        = wiz.get("feed_type", "Pellets")
-wiz_freq        = wiz.get("feed_freq", "Once a day")
-wiz_feeds_count = {"Once a day": 1, "Twice a day": 2, "3+ times a day": 3, "Every other day": 1}.get(wiz_freq, 1)
+wiz_freq        = wiz.get("feed_freq", "As-needed / irregular" if wiz_tank == "Shrimp Tank" else "Once a day")
+wiz_feeds_count = {
+    "As-needed / irregular": 1, "Twice a week": 2, "Once a week": 1,
+    "Every 2 weeks": 1, "Once a day": 1, "Twice a day": 2,
+    "3+ times a day": 3, "Every other day": 1,
+}.get(wiz_freq, 1)
 
 # ─────────────────────────────────────────────
 # SIDEBAR
@@ -982,6 +1043,14 @@ with st.sidebar:
     def pval(key, default):
         return st.session_state.get(f"pval_{key}", default)
 
+    def option_index(options, value, default):
+        if value in options:
+            return options.index(value)
+        for i, option in enumerate(options):
+            if str(option).startswith(str(value)):
+                return i
+        return options.index(default)
+
     planner_mode = st.radio("Planner mode", ["Simple", "Full"], horizontal=True,
                             help="Simple keeps only the inputs most people need. Full exposes maintenance, simulation, and model controls.")
     tank_purpose = st.selectbox("Tank purpose", list(TANK_PURPOSE_INFO.keys()),
@@ -991,8 +1060,9 @@ with st.sidebar:
     st.caption(TANK_PURPOSE_INFO[tank_purpose])
 
     st.header("1. Tank basics")
+    tank_type_default = "Shrimp Tank" if tank_purpose == "Shrimp colony / breeder" else pval("tank_type", wiz_tank)
     tank_type = st.selectbox("Tank type", ["Shrimp Tank", "Fish Tank", "Mixed Tank", "Custom"],
-                             index=["Shrimp Tank","Fish Tank","Mixed Tank","Custom"].index(pval("tank_type", wiz_tank)))
+                             index=["Shrimp Tank","Fish Tank","Mixed Tank","Custom"].index(tank_type_default))
     tank_size_l    = st.slider("Tank size (litres)", 10, 500, pval("tank_size_l", wiz_size), 1)
     animal_count   = st.number_input("Animal count (0 = estimate)", min_value=0, max_value=2000,
                                      value=pval("animal_count", wiz_count), step=1)
@@ -1017,14 +1087,15 @@ with st.sidebar:
     juvenile_shrimp = 0
     shrimplet_level = "Some"
     berried_females = "Some present"
-    moss_cover = "Moderate"
-    leaf_litter = "Few leaves"
-    visible_biofilm = "Moderate"
-    snail_presence = "Few"
+    moss_cover = "Moderate (covers 10-25% of hardscape)"
+    leaf_litter = "Few leaves (1-3 small leaves)"
+    visible_biofilm = "Moderate (light film, shrimp graze often)"
+    snail_presence = "Few (1-10 visible)"
     wood_type = "Cholla"
     wood_pieces = 1
     wood_length_cm = 5.0
     wood_diameter_cm = 2.0
+    hardscape_items = []
 
     if shrimp_breeder_enabled:
         st.header("2. Shrimp breeder setup")
@@ -1041,23 +1112,48 @@ with st.sidebar:
         berried_females = st.selectbox("Berried females", ["None seen", "Some present", "Many present"],
                                        index=["None seen", "Some present", "Many present"].index(pval("berried_females", "Some present")))
 
-        with st.expander("Biofilm and grazing surface", expanded=True):
-            wood_type = st.selectbox("Wood type", list(WOOD_TYPE_INFO.keys()),
-                                     index=list(WOOD_TYPE_INFO.keys()).index(pval("wood_type", "Cholla")))
-            wood_pieces = st.number_input("Wood pieces", min_value=0, max_value=30,
-                                          value=pval("wood_pieces", 1), step=1)
-            wood_length_cm = st.number_input("Average wood length (cm)", min_value=0.0, max_value=120.0,
-                                             value=float(pval("wood_length_cm", 5.0)), step=0.5)
-            wood_diameter_cm = st.number_input("Average wood diameter (cm)", min_value=0.5, max_value=20.0,
-                                               value=float(pval("wood_diameter_cm", 2.0)), step=0.5)
-            moss_cover = st.selectbox("Moss / fine plant cover", ["None", "Small clump", "Moderate", "Dense"],
-                                      index=["None", "Small clump", "Moderate", "Dense"].index(pval("moss_cover", "Moderate")))
-            leaf_litter = st.selectbox("Leaf litter / botanicals", ["None", "Few leaves", "Moderate", "Heavy"],
-                                       index=["None", "Few leaves", "Moderate", "Heavy"].index(pval("leaf_litter", "Few leaves")))
-            visible_biofilm = st.selectbox("Visible biofilm / algae", ["Low", "Moderate", "Heavy"],
-                                           index=["Low", "Moderate", "Heavy"].index(pval("visible_biofilm", "Moderate")))
-            snail_presence = st.selectbox("Snails", ["None", "Few", "Many"],
-                                          index=["None", "Few", "Many"].index(pval("snail_presence", "Few")))
+        with st.expander("Tank builder: hardscape and biofilm", expanded=True):
+            hardscape_count = st.number_input("Hardscape item types", min_value=0, max_value=6,
+                                              value=pval("hardscape_count", 1), step=1,
+                                              help="Use one row per wood or rock type. Example: cholla plus lava rock = 2 item types.")
+            for i in range(int(hardscape_count)):
+                st.markdown(f"**Item {i + 1}**")
+                item_default = pval(f"hardscape_{i}_type", pval("wood_type", "Cholla") if i == 0 else "Lava rock")
+                if item_default not in HARDSCAPE_TYPE_INFO:
+                    item_default = "Unknown aquarium wood"
+                item_type = st.selectbox("Type", list(HARDSCAPE_TYPE_INFO.keys()),
+                                         index=list(HARDSCAPE_TYPE_INFO.keys()).index(item_default),
+                                         key=f"hardscape_type_{i}",
+                                         help=HARDSCAPE_TYPE_INFO[item_default]["description"])
+                pieces = st.number_input("Pieces", min_value=0, max_value=30,
+                                         value=pval(f"hardscape_{i}_pieces", pval("wood_pieces", 1) if i == 0 else 1),
+                                         step=1, key=f"hardscape_pieces_{i}")
+                length_cm = st.number_input("Average length (cm)", min_value=0.0, max_value=120.0,
+                                            value=float(pval(f"hardscape_{i}_length_cm", pval("wood_length_cm", 5.0) if i == 0 else 6.0)),
+                                            step=0.5, key=f"hardscape_length_{i}")
+                diameter_cm = st.number_input("Average width / diameter (cm)", min_value=0.5, max_value=40.0,
+                                              value=float(pval(f"hardscape_{i}_diameter_cm", pval("wood_diameter_cm", 2.0) if i == 0 else 4.0)),
+                                              step=0.5, key=f"hardscape_diameter_{i}")
+                hardscape_items.append({
+                    "type": item_type, "pieces": int(pieces),
+                    "length_cm": float(length_cm), "diameter_cm": float(diameter_cm),
+                })
+                st.caption(HARDSCAPE_TYPE_INFO[item_type]["description"])
+
+            st.markdown("**Biofilm checklist**")
+            moss_options = list(MOSS_COVER_OPTIONS.keys())
+            litter_options = list(LEAF_LITTER_OPTIONS.keys())
+            biofilm_options = list(VISIBLE_BIOFILM_OPTIONS.keys())
+            snail_options = list(SNAIL_OPTIONS.keys())
+            moss_cover = st.selectbox("Moss / fine plant cover", moss_options,
+                                      index=option_index(moss_options, pval("moss_cover", "Moderate (covers 10-25% of hardscape)"), "Moderate (covers 10-25% of hardscape)"))
+            leaf_litter = st.selectbox("Leaf litter / botanicals", litter_options,
+                                       index=option_index(litter_options, pval("leaf_litter", "Few leaves (1-3 small leaves)"), "Few leaves (1-3 small leaves)"))
+            visible_biofilm = st.selectbox("Visible biofilm / algae", biofilm_options,
+                                           index=option_index(biofilm_options, pval("visible_biofilm", "Moderate (light film, shrimp graze often)"), "Moderate (light film, shrimp graze often)"))
+            snail_presence = st.selectbox("Snails", snail_options,
+                                          index=option_index(snail_options, pval("snail_presence", "Few (1-10 visible)"), "Few (1-10 visible)"))
+            st.caption("Pick the closest visible condition. These labels are practical estimates, not exact measurements.")
 
     if planner_mode == "Full":
         life_stage = st.selectbox("Feeding context", list(LIFE_STAGE_INFO.keys()),
@@ -1126,7 +1222,7 @@ with st.sidebar:
         biofilm_result = estimate_shrimp_biofilm_surface(
             tank_size_l, shrimp_species, colony_stage, wood_type, int(wood_pieces),
             float(wood_length_cm), float(wood_diameter_cm), moss_cover, plant_density,
-            leaf_litter, visible_biofilm, snail_presence,
+            leaf_litter, visible_biofilm, snail_presence, hardscape_items,
         )
         st.caption(
             f"Biofilm support: {biofilm_result['support_word'].lower()} · "
@@ -1158,24 +1254,61 @@ with st.sidebar:
     st.caption(f"{feed_level} feed · ~{approx_grams:.3f}g · {pellet_equivalent_text(feed_type, approx_grams)}")
 
     schedule_mode = "Daily schedule" if planner_mode == "Simple" else st.radio("Schedule mode", ["Daily schedule", "Timeline"], horizontal=True)
+    feed_day_offsets: List[int] = []
+    feeding_pattern = "Daily"
     if schedule_mode == "Daily schedule":
-        feeds_per_day  = st.slider("Feeds per day", 0, 5, wiz_feeds_count)
-        days_to_sim    = 1 if planner_mode == "Simple" else st.slider("Days to simulate", 1, 7, 1)
         one_day_int    = int((24 * 60) / minutes_per_interval)
-        simulation_length = max(simulation_length, one_day_int * days_to_sim)
         daily_pts: List[int] = []
-        for i in range(feeds_per_day):
-            default_h  = [9, 18, 21, 12, 15][i] if i < 5 else 9
-            fc         = st.time_input(f"Feed {i+1}", value=time(default_h, 0), step=900)
+        if shrimp_breeder_enabled:
+            pattern_options = ["As-needed / irregular", "Twice a week", "Once a week", "Every 2 weeks", "Daily"]
+            saved_pattern = pval("feeding_pattern", wiz_freq if wiz_freq in pattern_options else "As-needed / irregular")
+            feeding_pattern = st.selectbox(
+                "Feeding pattern", pattern_options,
+                index=pattern_options.index(saved_pattern),
+                help="Shrimp colonies often do best with light occasional feeding plus constant grazing. Use this instead of forcing a daily schedule.",
+            )
+            days_to_sim = 14
+            simulation_length = max(simulation_length, one_day_int * days_to_sim)
+            today = datetime.now().date()
+            day_options = list(range(days_to_sim))
+            if feeding_pattern == "Twice a week":
+                default_days = [0, 3]
+            elif feeding_pattern == "Daily":
+                default_days = list(range(days_to_sim))
+            else:
+                default_days = [0]
+            if feeding_pattern == "Daily":
+                feed_day_offsets = default_days
+            else:
+                feed_day_offsets = st.multiselect(
+                    "Feed days to include",
+                    day_options,
+                    default=default_days,
+                    format_func=lambda d: f"Day {d + 1} - {(today + timedelta(days=d)).strftime('%a %d %b')}",
+                    help="Model the days you might feed without pretending shrimp need food every day.",
+                )
+            fc = st.time_input("Usual feed time", value=time(18, 0), step=900)
             mins_start = fc.hour * 60 + fc.minute
-            daily_pts.append(int(round(mins_start / minutes_per_interval)))
+            daily_pts = [int(round(mins_start / minutes_per_interval))]
+            st.caption("Irregular shrimp feeding is normal if the tank has mature biofilm and enough grazing surface.")
+        else:
+            feeds_per_day  = st.slider("Feeds per day", 0, 5, wiz_feeds_count)
+            days_to_sim    = 1 if planner_mode == "Simple" else st.slider("Days to simulate", 1, 7, 1)
+            simulation_length = max(simulation_length, one_day_int * days_to_sim)
+            for i in range(feeds_per_day):
+                default_h  = [9, 18, 21, 12, 15][i] if i < 5 else 9
+                fc         = st.time_input(f"Feed {i+1}", value=time(default_h, 0), step=900)
+                mins_start = fc.hour * 60 + fc.minute
+                daily_pts.append(int(round(mins_start / minutes_per_interval)))
+            feed_day_offsets = list(range(days_to_sim))
         feed_times: List[int] = sorted(set(
             p + day * one_day_int
-            for day in range(days_to_sim)
+            for day in feed_day_offsets
             for p in daily_pts
         ))
-        st.caption(f"Covering {days_to_sim} day(s).")
+        st.caption(f"Calendar window: {days_to_sim} day(s).")
     else:
+        days_to_sim = max(1, int((simulation_length * minutes_per_interval) / (24 * 60)))
         n_feeds    = st.slider("Number of feeds", 0, 5, wiz_feeds_count)
         feed_times = []
         for i in range(n_feeds):
@@ -1183,6 +1316,7 @@ with st.sidebar:
             ft         = st.slider(f"Feed {i+1} (intervals)", 0, simulation_length-1,
                                    min(default, simulation_length-1), 1)
             feed_times.append(ft)
+        feed_day_offsets = sorted(set(int((ft * minutes_per_interval) // (24 * 60)) for ft in feed_times))
 
     if planner_mode == "Full":
         goal = st.selectbox("Optimisation goal", list(GOAL_INFO.keys()))
@@ -1261,6 +1395,7 @@ load_eff      = load_score(peak_value, total_load, len(feed_times), goal)
 overall_eff   = overall_efficiency_score(timing_eff, load_eff)
 avg_gap       = average_feed_gap(feed_times)
 gap_ok        = True if len(feed_times) < 2 else (avg_gap is not None and avg_gap >= gap_needed)
+spacing_risk  = bool(overlap and peak_value > 4)
 recovery_mins = clear_steps * minutes_per_interval
 gap_mins      = gap_needed * minutes_per_interval
 baseline_load = area_under_curve(baseline_values)
@@ -1302,8 +1437,14 @@ if "_pending_save_name" in st.session_state:
         "berried_females": berried_females, "wood_type": wood_type, "wood_pieces": int(wood_pieces),
         "wood_length_cm": float(wood_length_cm), "wood_diameter_cm": float(wood_diameter_cm),
         "moss_cover": moss_cover, "leaf_litter": leaf_litter, "visible_biofilm": visible_biofilm,
-        "snail_presence": snail_presence,
+        "snail_presence": snail_presence, "feeding_pattern": feeding_pattern,
+        "hardscape_count": len(hardscape_items),
     }
+    for i, item in enumerate(hardscape_items):
+        st.session_state.profiles[pname][f"hardscape_{i}_type"] = item["type"]
+        st.session_state.profiles[pname][f"hardscape_{i}_pieces"] = int(item["pieces"])
+        st.session_state.profiles[pname][f"hardscape_{i}_length_cm"] = float(item["length_cm"])
+        st.session_state.profiles[pname][f"hardscape_{i}_diameter_cm"] = float(item["diameter_cm"])
 
 # ─────────────────────────────────────────────
 # HEADER
@@ -1330,12 +1471,12 @@ if st.session_state.last_optimise_changes:
 # ── ONE-LINE VERDICT ──
 if not feed_times:
     st.info("Add a feeding schedule in the sidebar to see your results.")
-elif overlap or peak_value > 6:
+elif spacing_risk or peak_value > 6:
     st.markdown(
         f'<div class="status-card risk"><div class="status-label">High attention</div><p class="status-text">{summary_text}</p></div>',
         unsafe_allow_html=True,
     )
-elif peak_value > 4 or not gap_ok:
+elif peak_value > 4 or (not gap_ok and peak_value > 4):
     st.markdown(
         f'<div class="status-card warn"><div class="status-label">Review recommended</div><p class="status-text">{summary_text}</p></div>',
         unsafe_allow_html=True,
@@ -1374,8 +1515,8 @@ st.markdown(summary_html, unsafe_allow_html=True)
 # TABS
 # ─────────────────────────────────────────────
 
-tab_overview, tab_graph, tab_meaning, tab_log, tab_advanced = st.tabs([
-    "Overview", "Graph", "What it means", "Feeding log", "Advanced"
+tab_overview, tab_graph, tab_meaning, tab_log, tab_calendar, tab_advanced = st.tabs([
+    "Overview", "Graph", "What it means", "Feeding log", "Calendar", "Advanced"
 ])
 
 # ─── TAB 1: OVERVIEW ───
@@ -1383,7 +1524,7 @@ with tab_overview:
     st.subheader("What to do")
     if not feed_times:
         st.info("Set up a feeding schedule in the sidebar.")
-    elif overlap or peak_value > 6:
+    elif spacing_risk or peak_value > 6:
         st.markdown(
             f'<div class="status-card risk"><div class="status-label">Recommended adjustment</div><p class="status-text">Reduce to {escape(suggested_visual)} (~{suggested_g:.3f}g) and increase spacing to at least {format_duration(gap_mins)} between feeds.</p></div>',
             unsafe_allow_html=True,
@@ -1444,7 +1585,7 @@ with tab_overview:
     s1.metric("Timing efficiency", f"{timing_eff}/10", efficiency_word(timing_eff))
     s2.metric("Load efficiency",   f"{load_eff}/10",   efficiency_word(load_eff))
     s3.metric("Waste risk",        risk_word(overall_eff), f"{overall_eff:.1f}/10")
-    s4.metric("Overlap risk",      "Low" if not overlap else "Present", "10/10" if not overlap else "3/10")
+    s4.metric("Spacing risk",      "Low" if not spacing_risk else "Review", "Safe zone" if overlap and not spacing_risk else ("10/10" if not spacing_risk else "3/10"))
 
     st.divider()
 
@@ -1622,11 +1763,13 @@ with tab_meaning:
     with right:
         st.subheader("What to do")
         actions = []
-        if overlap:
+        if spacing_risk:
             actions.append("Increase the spacing between feeds.")
             better = suggest_better_spacing(feed_times, values, simulation_length)
             if better:
                 actions.append(f"Better spacing suggestion: {real_time_text(better, minutes_per_interval)} after start.")
+        elif overlap:
+            actions.append("Some feeds overlap mathematically, but the curve remains in the safe zone.")
         else:
             actions.append("Tank recovers between feeds — timing is fine.")
         if peak_value > 6:
@@ -1705,6 +1848,67 @@ with tab_log:
         st.info("No feed events logged yet this session. Log a feed above to start tracking.")
 
 # ─── TAB 5: ADVANCED ───
+with tab_calendar:
+    st.subheader("Tank routine calendar")
+    st.caption("Use this as a simple planner for feed days, water changes, checks, sale prep, and tank notes.")
+
+    today = datetime.now().date()
+    calendar_days = max(7, min(28, int(days_to_sim) if "days_to_sim" in locals() else 14))
+    note_key = f"routine_note_{tank_type}_{tank_size_l}"
+    saved_notes = st.session_state.setdefault(note_key, {})
+
+    with st.form("calendar_note_form"):
+        nc1, nc2 = st.columns([1, 3])
+        note_day = nc1.selectbox(
+            "Day",
+            list(range(calendar_days)),
+            format_func=lambda d: f"{(today + timedelta(days=d)).strftime('%a %d %b')}",
+        )
+        note_text = nc2.text_input("Add note", placeholder="e.g. water test, top-up, cull/sale check, add leaf, observe berried females")
+        note_submitted = st.form_submit_button("Add note", type="primary")
+        if note_submitted and note_text.strip():
+            key = str(note_day)
+            saved_notes.setdefault(key, []).append(note_text.strip())
+            st.success("Calendar note added.")
+
+    feed_days_set = set(feed_day_offsets)
+    wc_days_set = set(range(0, calendar_days, max(1, int(water_change_days)))) if water_change_pct > 0 else set()
+
+    def routine_tasks_for(offset: int) -> List[str]:
+        tasks = []
+        if offset in feed_days_set:
+            tasks.append(f"Feed {visual_equivalent}")
+        elif shrimp_breeder_enabled and feeding_pattern == "As-needed / irregular":
+            tasks.append("Observe grazing; feed only if needed")
+        if offset in wc_days_set and offset != 0:
+            tasks.append(f"{water_change_pct}% water change")
+        if shrimp_breeder_enabled and offset % 3 == 0:
+            tasks.append("Check biofilm, moults, berried females")
+        for note in saved_notes.get(str(offset), []):
+            tasks.append(f"Note: {note}")
+        return tasks or ["No planned task"]
+
+    selected_date = today + timedelta(days=int(note_day))
+    st.markdown(f"**Selected day: {selected_date.strftime('%A %d %B')}**")
+    for task in routine_tasks_for(int(note_day)):
+        st.write(f"- {task}")
+    st.divider()
+
+    for week_start in range(0, calendar_days, 7):
+        cols = st.columns(7)
+        for col, offset in zip(cols, range(week_start, min(week_start + 7, calendar_days))):
+            day = today + timedelta(days=offset)
+            tasks = routine_tasks_for(offset)
+            with col:
+                st.markdown(f"**{day.strftime('%a')}**")
+                st.caption(day.strftime("%d %b"))
+                for task in tasks:
+                    st.write(f"- {task}")
+
+    if saved_notes and st.button("Clear calendar notes"):
+        st.session_state[note_key] = {}
+        st.rerun()
+
 with tab_advanced:
     with st.expander("Full setup summary", expanded=True):
         cols = st.columns(2)
